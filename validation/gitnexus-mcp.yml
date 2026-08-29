@@ -1,0 +1,19 @@
+- insert:
+    - id: gitnexus-mcp
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: gitnexus
+        transport: stdio
+        command: gitnexus
+        args:
+          - mcp
+        cwd: /home/HumXC/dsh-plugins
+        toolCallTimeoutMs: 60000
+        failOnStartupError: true
+        reconnect:
+          enabled: true
+          initialDelayMs: 500
+          maxDelayMs: 30000
+          maxAttempts: 10
+    - id: gitnexus-tool-schema-probe
+      name: "file:///home/HumXC/dsh-plugins/validation/tool-schema-probe.mjs"

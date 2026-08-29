@@ -1,0 +1,17 @@
+- insert:
+    - id: dsh-gitnexus-validation
+      name: "file:///home/HumXC/dsh-plugins/packages/dsh-gitnexus/lib/index.js"
+      config:
+        command: gitnexus
+        args:
+          - mcp
+        serverName: gitnexus
+        autoAugment: true
+        maxConnections: 2
+        toolCallTimeoutMs: 60000
+        augmentTimeoutMs: 15000
+        maxAugmentsPerResult: 2
+        maxSecondaryPatterns: 1
+        maxContextChars: 12000
+    - id: gitnexus-tool-schema-probe
+      name: "file:///home/HumXC/dsh-plugins/validation/tool-schema-probe.mjs"

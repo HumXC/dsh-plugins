@@ -1,0 +1,8 @@
+.pi
+openspec
+.gitnexus
+node_modules/
+packages/*/lib/
+.direnv/
+result
+install.sh

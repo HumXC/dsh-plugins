@@ -1,0 +1,18 @@
+- insert:
+    - id: dsh-gitnexus
+      name: dsh-gitnexus
+      inject:
+        - tools
+        - subprocess
+      config:
+        command: gitnexus
+        args:
+          - mcp
+        serverName: gitnexus
+        autoAugment: true
+        maxConnections: 8
+        toolCallTimeoutMs: 60000
+        augmentTimeoutMs: 15000
+        maxAugmentsPerResult: 3
+        maxSecondaryPatterns: 2
+        maxContextChars: 24000
