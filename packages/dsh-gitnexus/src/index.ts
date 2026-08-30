@@ -1,11 +1,13 @@
 import process from "node:process";
 import type { Context } from "@deepseek-ai/cordis";
+import type { WebServer } from "@deepseek-ai/dsh-host-webserver";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm";
 import type {
   JsonValue,
   ToolDefinition,
   ToolRunContext,
 } from "@deepseek-ai/dsh-tools";
+import { AnalysisCoordinator } from "./analysis-coordinator.js";
 import { AutoAugmentController } from "./augment.js";
 import { Config, resolveConfig } from "./config.js";
 import type { Config as PluginConfig, ResolvedConfig } from "./config.js";
@@ -13,6 +15,7 @@ import { McpConnectionRouter } from "./mcp-router.js";
 import type { ListedMcpTool, McpCallResult } from "./mcp-router.js";
 import { publicToolName } from "./naming.js";
 import { resolveWorkspaceRoute, sessionCwd } from "./repository.js";
+import { GitNexusWebHost } from "./web-host.js";
 
 export { Config };
 export type { PluginConfig as ConfigOptions, ResolvedConfig };
@@ -170,11 +173,13 @@ export async function apply(
 ): Promise<void> {
   const config = resolveConfig(rawConfig);
   const lifetime = new AbortController();
+  const analysis = new AnalysisCoordinator();
   const router = new McpConnectionRouter(
     ctx.subprocess,
     config,
     lifetime.signal,
     (message) => ctx.logger.debug(message),
+    analysis,
   );
   const disposers: Array<() => void> = [];
   let augmenter: AutoAugmentController | undefined;
@@ -197,8 +202,36 @@ export async function apply(
     }
 
     if (config.autoAugment) {
-      augmenter = new AutoAugmentController(ctx, config);
+      augmenter = new AutoAugmentController(ctx, config, analysis);
       augmenter.start();
+    }
+
+    if (config.webUi !== false) {
+      void ctx.inject(["webServer", "sessions"], (webCtx) => {
+        // SAFETY: Cordis invokes this callback only while both injected services exist.
+        const webServer = (
+          webCtx as Context & { readonly webServer: WebServer }
+        ).webServer;
+        const webHost = new GitNexusWebHost(webCtx, config, analysis, router);
+        const disposeCapability = webServer.register({
+          kind: "exact",
+          path: "/gitnexus/capability",
+          handler: (req, res) => webHost.handleCapability(req, res),
+        });
+        const disposeGateway = webServer.register({
+          kind: "prefix",
+          path: "/gitnexus/session",
+          handler: (req, res) => webHost.handle(req, res),
+        });
+        webCtx.effect(
+          () => async () => {
+            disposeGateway();
+            disposeCapability();
+            await webHost.dispose();
+          },
+          "dsh-gitnexus: release Web gateway and GitNexus server",
+        );
+      });
     }
   } catch (error) {
     for (const dispose of disposers.toReversed()) dispose();

@@ -23,6 +23,26 @@ test("prefers the nearest ancestor with a GitNexus index", () => {
   }
 });
 
+test("does not escape a git root to use an indexed parent directory", () => {
+  const parent = mkdtempSync(join(tmpdir(), "dsh-gitnexus-route-"));
+  try {
+    mkdirSync(join(parent, ".gitnexus"));
+    const root = join(parent, "workspace");
+    mkdirSync(root);
+    writeFileSync(join(root, ".git"), "gitdir: elsewhere");
+    const nested = join(root, "src");
+    mkdirSync(nested);
+
+    assert.deepEqual(resolveWorkspaceRoute(nested), {
+      cwd: nested,
+      root,
+      hasIndex: false,
+    });
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test("falls back to the git root when no GitNexus index exists", () => {
   const root = mkdtempSync(join(tmpdir(), "dsh-gitnexus-route-"));
   try {

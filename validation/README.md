@@ -47,3 +47,25 @@ dsh --profile web \
 ```
 
 This path validates dynamic tool discovery, the managed DSH subprocess transport, workspace connection creation, and one `list_repos` call. It reached all 13 GitNexus tools during the initial implementation validation.
+
+## Web workspace view
+
+A direct `file://.../lib/index.js` overlay validates the host plugin but does not install the package metadata that advertises its browser entry. Use an isolated DSH home for the complete Web check:
+
+```bash
+validation_home="$(mktemp -d)"
+DSH_HOME="$validation_home" dsh plugin --profile web add \
+  /home/HumXC/dsh-plugins/packages/dsh-gitnexus
+DSH_HOME="$validation_home" dsh --profile web --no-open --port 14567
+```
+
+Then open `http://127.0.0.1:14567`, create or open a conversation rooted in the intended workspace, and verify:
+
+1. **GitNexus** appears beside **Chat** and **Trajectory**.
+2. An unindexed workspace offers only **Analyze current workspace**.
+3. Analysis progress, cancellation, failure, and retry remain inside that workspace.
+4. Analysis uses `gitnexus analyze --index-only`; verify it does not create `AGENTS.md`, `CLAUDE.md`, or harness skill directories.
+5. A ready workspace opens its graph without a repository selector.
+6. Requests for another repository, clone/delete, embeddings, MCP, upload, and unknown APIs are rejected by the DSH gateway.
+
+The package tests cover opaque view tokens, two-workspace isolation, forced repository inputs, index-only analysis, restricted APIs, analysis cancellation, service ownership, and asset compatibility. The browser check confirms DSH slot composition and the upstream GitNexus UI bundle.

@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { SubprocessRuntime } from "@deepseek-ai/dsh-subprocess";
+import { AnalysisCoordinator } from "./analysis-coordinator.js";
 import type { ResolvedConfig } from "./config.js";
 import { ManagedStdioTransport } from "./managed-stdio-transport.js";
 
@@ -25,9 +26,11 @@ export class McpConnectionRouter {
     private readonly config: ResolvedConfig,
     private readonly lifetimeSignal: AbortSignal,
     private readonly onDiagnostic: (message: string) => void,
+    private readonly analysis = new AnalysisCoordinator(),
   ) {}
 
   async discoverTools(cwd: string): Promise<ListedMcpTool[]> {
+    this.assertAvailable(cwd);
     const slot = await this.connect(cwd);
     try {
       return await this.listAllTools(slot.client);
@@ -42,6 +45,7 @@ export class McpConnectionRouter {
     args: Record<string, unknown>,
     signal: AbortSignal,
   ): Promise<McpCallResult> {
+    this.assertAvailable(cwd);
     return this.withConnection(cwd, async (slot) => {
       return slot.client.callTool(
         { name: rawName, arguments: args },
@@ -49,6 +53,15 @@ export class McpConnectionRouter {
         { signal, timeout: this.config.toolCallTimeoutMs },
       );
     });
+  }
+
+  async evict(cwd: string): Promise<void> {
+    const pending = this.pending.get(cwd);
+    if (pending !== undefined) await pending.catch(() => undefined);
+    const slot = this.connections.get(cwd);
+    if (slot === undefined) return;
+    this.connections.delete(cwd);
+    await slot.client.close();
   }
 
   async dispose(): Promise<void> {
@@ -93,6 +106,7 @@ export class McpConnectionRouter {
 
   private async acquireConnection(cwd: string): Promise<ConnectionSlot> {
     while (true) {
+      this.assertAvailable(cwd);
       if (this.disposed || this.lifetimeSignal.aborted) {
         throw new Error("dsh-gitnexus: MCP router is disposed");
       }
@@ -122,6 +136,10 @@ export class McpConnectionRouter {
     const creation = (async () => {
       await this.ensureCapacity();
       const slot = await this.connect(cwd);
+      if (this.analysis.isRebuilding(cwd)) {
+        await slot.client.close();
+        this.assertAvailable(cwd);
+      }
       if (this.disposed || this.lifetimeSignal.aborted) {
         await slot.client.close();
         throw new Error(
@@ -182,6 +200,14 @@ export class McpConnectionRouter {
         // Preserve the connection failure; transport cleanup errors are secondary here.
       }
       throw error;
+    }
+  }
+
+  private assertAvailable(cwd: string): void {
+    if (this.analysis.isRebuilding(cwd)) {
+      throw new Error(
+        `dsh-gitnexus: GitNexus index for ${cwd} is being rebuilt; retry after analysis completes`,
+      );
     }
   }
 }

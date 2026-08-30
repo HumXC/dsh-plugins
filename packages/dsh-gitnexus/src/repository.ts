@@ -7,8 +7,8 @@ export interface WorkspaceRoute {
   hasIndex: boolean;
 }
 
-function canonicalDirectory(cwd: string): string {
-  const absolute = resolve(cwd);
+export function canonicalWorkspacePath(path: string): string {
+  const absolute = resolve(path);
   try {
     return realpathSync.native(absolute);
   } catch {
@@ -17,16 +17,15 @@ function canonicalDirectory(cwd: string): string {
 }
 
 export function resolveWorkspaceRoute(cwd: string): WorkspaceRoute {
-  const canonicalCwd = canonicalDirectory(cwd);
+  const canonicalCwd = canonicalWorkspacePath(cwd);
   let directory = canonicalCwd;
-  let gitRoot: string | undefined;
 
   while (true) {
     if (existsSync(resolve(directory, ".gitnexus"))) {
       return { cwd: canonicalCwd, root: directory, hasIndex: true };
     }
-    if (gitRoot === undefined && existsSync(resolve(directory, ".git"))) {
-      gitRoot = directory;
+    if (existsSync(resolve(directory, ".git"))) {
+      return { cwd: canonicalCwd, root: directory, hasIndex: false };
     }
 
     const parent = dirname(directory);
@@ -36,7 +35,7 @@ export function resolveWorkspaceRoute(cwd: string): WorkspaceRoute {
 
   return {
     cwd: canonicalCwd,
-    root: gitRoot ?? canonicalCwd,
+    root: canonicalCwd,
     hasIndex: false,
   };
 }

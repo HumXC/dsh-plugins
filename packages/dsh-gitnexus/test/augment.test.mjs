@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { AnalysisCoordinator } from "../lib/analysis-coordinator.js";
 import { AutoAugmentController } from "../lib/augment.js";
 import { resolveConfig } from "../lib/config.js";
 
@@ -43,7 +44,8 @@ test("adds GitNexus context once per session and pattern", async () => {
     },
     logger: { debug() {}, warn() {} },
   };
-  const controller = new AutoAugmentController(ctx, resolveConfig());
+  const analysis = new AnalysisCoordinator();
+  const controller = new AutoAugmentController(ctx, resolveConfig(), analysis);
   controller.start();
 
   try {
@@ -64,6 +66,14 @@ test("adds GitNexus context once per session and pattern", async () => {
       value: { path: "src/AuthService.ts" },
       content: [{ type: "text", text: "export class AuthService {}" }],
     };
+
+    analysis.begin(root);
+    const skipped = await listener(exec, result, async () => ({
+      kind: "accept",
+    }));
+    assert.equal(skipped.additionalContexts, undefined);
+    assert.equal(spawns.length, 0);
+    analysis.finish(root, "cancelled");
 
     const first = await listener(exec, result, async () => ({
       kind: "accept",

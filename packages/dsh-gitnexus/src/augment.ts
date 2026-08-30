@@ -5,6 +5,7 @@ import type {
   ToolExecution,
   ToolExecutionResult,
 } from "@deepseek-ai/dsh-tools";
+import { AnalysisCoordinator } from "./analysis-coordinator.js";
 import type { ResolvedConfig } from "./config.js";
 import { augmentationCandidates, isAugmentableTool } from "./patterns.js";
 import { resolveWorkspaceRoute, sessionCwd } from "./repository.js";
@@ -33,6 +34,7 @@ export class AutoAugmentController {
   constructor(
     private readonly ctx: Context,
     private readonly config: ResolvedConfig,
+    private readonly analysis = new AnalysisCoordinator(),
   ) {}
 
   start(): void {
@@ -73,7 +75,9 @@ export class AutoAugmentController {
       return downstream;
 
     const route = resolveWorkspaceRoute(cwd);
-    if (!route.hasIndex) return downstream;
+    if (!route.hasIndex || this.analysis.isRebuilding(route.root)) {
+      return downstream;
+    }
 
     const candidates = augmentationCandidates(
       exec.name,

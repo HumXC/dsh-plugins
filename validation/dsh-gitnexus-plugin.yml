@@ -13,5 +13,8 @@
         maxAugmentsPerResult: 2
         maxSecondaryPatterns: 1
         maxContextChars: 12000
+        webUi: auto
+        servePort: 4747
+        serveStartupTimeoutMs: 15000
     - id: gitnexus-tool-schema-probe
       name: "file:///home/HumXC/dsh-plugins/validation/tool-schema-probe.mjs"

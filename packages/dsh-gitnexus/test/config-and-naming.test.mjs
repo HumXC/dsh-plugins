@@ -10,6 +10,9 @@ test("resolves stable plugin defaults", () => {
   assert.equal(config.serverName, "gitnexus");
   assert.equal(config.maxConnections, 8);
   assert.equal(config.autoAugment, true);
+  assert.equal(config.webUi, "auto");
+  assert.equal(config.servePort, 4747);
+  assert.equal(config.serveStartupTimeoutMs, 15_000);
 });
 
 test("rejects invalid process and capacity settings", () => {
@@ -24,6 +27,14 @@ test("rejects invalid process and capacity settings", () => {
   assert.throws(
     () => resolveConfig({ maxConnections: 0 }),
     /maxConnections must be a positive safe integer/,
+  );
+  assert.throws(
+    () => resolveConfig({ servePort: 65_536 }),
+    /servePort must not exceed 65535/,
+  );
+  assert.throws(
+    () => resolveConfig({ webUi: "always" }),
+    /webUi must be auto or a boolean/,
   );
 });
 

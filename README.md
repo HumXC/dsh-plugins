@@ -4,7 +4,7 @@ This repository stores multiple DeepSeek Harness plugins as independent packages
 
 ## Packages
 
-- [`dsh-gitnexus`](./packages/dsh-gitnexus): workspace-routed GitNexus MCP tools and automatic graph-context enrichment for DSH Web.
+- [`dsh-gitnexus`](./packages/dsh-gitnexus): workspace-routed GitNexus tools, automatic graph context, and a current-workspace-only GitNexus view for DSH Web.
 
 ## Development
 

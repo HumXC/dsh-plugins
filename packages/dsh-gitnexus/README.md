@@ -1,85 +1,132 @@
 # dsh-gitnexus
 
-GitNexus integration for DeepSeek Harness Web. The plugin exposes GitNexus MCP tools through DSH's existing tool UI and automatically attaches graph context after selected filesystem/search tool calls.
+DeepSeek Harness integration for [GitNexus](https://github.com/abhigyanpatwari/GitNexus).
 
-## Compatibility
+The plugin provides:
 
-- DeepSeek Harness: `0.1.1-rc.2`
-- Node.js: 22 or newer
-- GitNexus: tested with the `gitnexus mcp` and `gitnexus augment` commands available on `PATH`
+- all GitNexus MCP tools through DSH's managed subprocess transport;
+- per-session routing to the current workspace;
+- automatic graph context after compatible DSH tool results;
+- a GitNexus view beside Chat and Trajectory in DSH Web;
+- first-time analysis and reanalysis restricted to the current workspace.
 
-GitNexus is a separate runtime dependency and has its own license. Installing this MIT-licensed adapter does not change GitNexus licensing terms.
+## Runtime behavior
 
-## Why this plugin routes MCP itself
+| Runtime | MCP tools | Automatic context | GitNexus view | `gitnexus serve` |
+|---|---:|---:|---:|---:|
+| DSH Web | yes | yes | yes | starts lazily when the view opens |
+| DSH TUI | yes | yes | no | not started |
+| Headless | yes | yes | no | not started |
 
-The official `@deepseek-ai/dsh-mcp-client` owns one static `cwd` per plugin instance. DSH Web can run sessions from several workspaces at once, so a static MCP process can address the wrong repository.
+The browser entry is declared with `platform: web`. The host-side Web companion is activated only when DSH provides both `webServer` and `sessions`; it does not alter TUI or headless interfaces.
 
-`dsh-gitnexus` instead:
+## Requirements
 
-1. discovers the GitNexus MCP tool catalog when the plugin starts;
-2. resolves each call from `exec.agent.session.header.cwd`;
-3. walks upward to the nearest `.gitnexus` index, falling back to the Git root;
-4. keeps one managed MCP process per workspace root;
-5. caps and evicts idle connections with an LRU policy;
-6. uses DSH's `ctx.subprocess` seam for process trees, cancellation, and credential scrubbing.
+- Node.js 22 or newer
+- DSH `0.1.1-rc.2` compatible packages
+- `gitnexus` available on `PATH`
+- GitNexus Web `>=1.6.5 <1.7.0`
 
-The model-facing names remain `mcp__gitnexus__<tool>`, so DSH Web uses its generic tool cards without a dedicated frontend.
+The Web version range is intentionally conservative because the plugin rewrites and proxies GitNexus's bundled Web application. Unsupported assets fail closed with an actionable error instead of rendering a partially compatible page.
 
-## Install into the Web profile
+## Build and install
+
+From the workspace root:
 
 ```bash
-dsh plugin --profile web add /absolute/path/to/dsh-plugins/packages/dsh-gitnexus
+pnpm install
+pnpm --filter dsh-gitnexus test
+pnpm --filter dsh-gitnexus build
+
+dsh plugin --profile web add \
+  /home/HumXC/dsh-plugins/packages/dsh-gitnexus
 ```
 
-Restart `dsh web` after installation. The package's bundle inserts the plugin with the defaults shown in [`bundle.yml`](./bundle.yml).
+Then restart DSH Web:
 
-Before using a repository, build its GitNexus index according to the GitNexus documentation. Automatic augmentation is skipped when no ancestor contains `.gitnexus`.
+```bash
+dsh web
+```
+
+The package's `bundle.yml` installs the host plugin. Its package metadata exposes the Web-only browser entry automatically.
+
+## GitNexus Web view
+
+Open **GitNexus** beside **Chat** and **Trajectory** in a conversation.
+
+- If the current workspace is unindexed, the view offers **Analyze current workspace**.
+- Analysis runs `gitnexus analyze --index-only` against the host-resolved workspace, so it updates the graph index without generating `AGENTS.md`, `CLAUDE.md`, or harness skill files.
+- While analysis runs, it shows progress and permits cancellation.
+- If an index is stale, the existing graph remains available and reanalysis is offered.
+- Reanalysis requires confirmation and temporarily pauses GitNexus MCP calls and automatic augmentation for that workspace only.
+- On success, the view automatically opens the current workspace graph.
+
+The view never accepts a path, remote URL, or repository name from the browser. The host resolves `session.header.cwd`, canonicalizes it, and forces that workspace into every allowed GitNexus request.
+
+### Isolation and safety
+
+- Browser routes use short-lived opaque view tokens bound to live DSH sessions.
+- `/api/repos` exposes only the current workspace.
+- Repository query/body fields are overwritten server-side.
+- Clone, delete, embedding, MCP, upload, and unknown GitNexus APIs are denied.
+- Only analysis jobs created for the current workspace can be read or cancelled.
+- The upstream service binds to `127.0.0.1` and is reached through a same-origin DSH gateway.
+- A restrictive CSP prevents the embedded page from connecting around the gateway.
+- GitNexus local-storage keys are namespaced per view token.
 
 ## Configuration
 
-| Option | Default | Meaning |
-| --- | ---: | --- |
-| `command` | `gitnexus` | GitNexus executable resolved in the subprocess execution world |
-| `args` | `["mcp"]` | Arguments used to start each MCP server |
-| `serverName` | `gitnexus` | Namespace in `mcp__<serverName>__<tool>` |
-| `autoAugment` | `true` | Attach `gitnexus augment` output after supported tool calls |
-| `maxConnections` | `8` | Maximum workspace MCP processes; idle entries are evicted LRU-first |
-| `toolCallTimeoutMs` | `60000` | MCP call timeout |
-| `augmentTimeoutMs` | `15000` | Per-pattern CLI augmentation timeout |
-| `maxAugmentsPerResult` | `3` | Maximum patterns enriched after one tool result |
-| `maxSecondaryPatterns` | `2` | Maximum filenames extracted from search output |
-| `maxContextChars` | `24000` | Maximum characters injected by one augmentation result |
+The bundle defaults are:
 
-Automatic augmentation listens to `read`, `grep`, `glob`, and `bash`. It derives primary patterns only from exact DSH `read.file_path` and `grep.pattern` arguments; filenames from DSH search/command output are secondary patterns. This avoids guessing shell semantics from arbitrary Bash source.
-
-Caches are isolated by DSH session and repository root. GitNexus tool calls themselves are excluded from automatic augmentation, so the integration cannot recursively enrich its own output.
-
-## Development
-
-The repository includes a Nix development shell with Node.js and pnpm:
-
-```bash
-nix develop "path:$PWD"
-pnpm install
-pnpm typecheck
-pnpm test
-pnpm build
+```yaml
+command: gitnexus
+args:
+  - mcp
+serverName: gitnexus
+autoAugment: true
+maxConnections: 8
+toolCallTimeoutMs: 60000
+augmentTimeoutMs: 15000
+maxAugmentsPerResult: 3
+maxSecondaryPatterns: 2
+maxContextChars: 24000
+webUi: auto
+servePort: 4747
+serveStartupTimeoutMs: 15000
 ```
 
-Run the isolated DSH Web validation without changing a profile:
+Web-specific settings:
 
-```bash
-dsh --profile web \
-  --patch ./validation/dsh-gitnexus-plugin.yml \
-  --no-open \
-  --port 0
+| Setting | Meaning |
+| --- | --- |
+| `webUi: auto` | Enable only when DSH Web services are available. |
+| `webUi: false` | Disable the Web view and GitNexus Web service entirely. |
+| `webUi: true` | Enable the Web companion whenever DSH Web services are available. |
+| `servePort` | Loopback port for `gitnexus serve`; an already-running compatible server is reused but never owned. |
+| `serveStartupTimeoutMs` | Maximum wait for a plugin-owned Web service to become compatible. |
+
+When the plugin owns the GitNexus Web process, it terminates that process during disposal. A reused process is left running.
+
+## Tool names
+
+MCP tools follow DSH's official namespace format:
+
+```text
+mcp__gitnexus__query
+mcp__gitnexus__context
+mcp__gitnexus__impact
 ```
 
-The validation probe expects the full GitNexus tool catalog and calls `mcp__gitnexus__list_repos` through DSH's `ToolRuntime`.
+The double underscores delimit the MCP and server namespaces. GitNexus's raw tool name retains its own single underscores.
 
-## Current limits
+## Validation
 
-- MCP tool discovery occurs at plugin activation. Restart DSH after upgrading GitNexus so schemas are rediscovered.
-- Workspace routing assumes the DSH process and `ctx.subprocess` provider see the same local filesystem paths.
-- A crashed workspace MCP process is discarded and recreated on the next tool call; there is no background reconnect loop.
-- The plugin does not add a dedicated Web page or graph visualization.
+Repository-level validation material lives in [`../../validation`](../../validation). It is not part of the published package and does not modify an installed DSH profile unless explicitly used.
+
+Run the package checks with:
+
+```bash
+pnpm --filter dsh-gitnexus typecheck
+pnpm --filter dsh-gitnexus test
+pnpm --filter dsh-gitnexus build
+```

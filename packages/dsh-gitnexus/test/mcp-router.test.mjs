@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { AnalysisCoordinator } from "../lib/analysis-coordinator.js";
 import { resolveConfig } from "../lib/config.js";
 import { McpConnectionRouter } from "../lib/mcp-router.js";
 
@@ -43,4 +44,34 @@ test("does not evict a connection reserved by a concurrent tool call", async () 
   assert.deepEqual(await activeCall, callResult);
   await router.dispose();
   assert.deepEqual(closed, ["/repo-a"]);
+});
+
+test("rejects calls and evicts an existing connection during analysis", async () => {
+  const closed = [];
+  const analysis = new AnalysisCoordinator();
+  const router = new McpConnectionRouter(
+    {},
+    resolveConfig(),
+    new AbortController().signal,
+    () => {},
+    analysis,
+  );
+  router.connections.set("/repo-a", {
+    client: {
+      close: async () => closed.push("/repo-a"),
+    },
+    transport: { isClosed: false },
+    activeCalls: 0,
+    lastUsed: 0,
+  });
+
+  analysis.begin("/repo-a");
+  await assert.rejects(
+    router.callTool("/repo-a", "query", {}, new AbortController().signal),
+    /being rebuilt/,
+  );
+  await router.evict("/repo-a");
+
+  assert.deepEqual(closed, ["/repo-a"]);
+  assert.equal(router.connections.has("/repo-a"), false);
 });

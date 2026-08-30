@@ -16,3 +16,6 @@
         maxAugmentsPerResult: 3
         maxSecondaryPatterns: 2
         maxContextChars: 24000
+        webUi: auto
+        servePort: 4747
+        serveStartupTimeoutMs: 15000
