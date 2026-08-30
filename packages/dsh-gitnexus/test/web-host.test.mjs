@@ -23,12 +23,14 @@ async function listen(server) {
     server.listen(0, "127.0.0.1", resolve);
   });
   const address = server.address();
-  if (!address || typeof address === "string") throw new Error("missing address");
+  if (!address || typeof address === "string")
+    throw new Error("missing address");
   return address.port;
 }
 
 async function call(port, path, options = {}) {
-  const body = options.body === undefined ? undefined : JSON.stringify(options.body);
+  const body =
+    options.body === undefined ? undefined : JSON.stringify(options.body);
   return new Promise((resolve, reject) => {
     const request = httpRequest(
       {
@@ -154,105 +156,134 @@ async function issueGateway(port, sessionId) {
     body: { sessionId },
   });
   assert.equal(response.status, 200);
-  assert.match(response.body.gateway, /^\/gitnexus\/session\/[A-Za-z0-9_-]{24,}$/);
+  assert.match(
+    response.body.gateway,
+    /^\/gitnexus\/session\/[A-Za-z0-9_-]{24,}$/,
+  );
   return response.body.gateway;
 }
 
 test("GitNexus Web host", async (t) => {
-await t.test("binds opaque view tokens and repository APIs to the current workspace", async (t) => {
-  const observed = [];
-  let fixture;
-  const fetchImplementation = async (input, init = {}) => {
-    const url = new URL(String(input));
-    if (url.pathname === "/api/info") return jsonResponse({ version: "1.6.5" });
-    if (url.pathname === "/api/repos") {
-      return jsonResponse([
-        { name: "current", path: fixture.current },
-        { name: "other", path: fixture.other },
-      ]);
-    }
-    observed.push({ method: init.method ?? "GET", url, body: init.body });
-    return jsonResponse({ repo: url.searchParams.get("repo"), ok: true });
-  };
-  fixture = await createFixture(t, fetchImplementation);
-  const gateway = await issueGateway(fixture.port, "session-current");
+  await t.test(
+    "binds opaque view tokens and repository APIs to the current workspace",
+    async (t) => {
+      const observed = [];
+      let fixture;
+      const fetchImplementation = async (input, init = {}) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/info")
+          return jsonResponse({ version: "1.6.5" });
+        if (url.pathname === "/api/repos") {
+          return jsonResponse([
+            { name: "current", path: fixture.current },
+            { name: "other", path: fixture.other },
+          ]);
+        }
+        observed.push({ method: init.method ?? "GET", url, body: init.body });
+        return jsonResponse({ repo: url.searchParams.get("repo"), ok: true });
+      };
+      fixture = await createFixture(t, fetchImplementation);
+      const gateway = await issueGateway(fixture.port, "session-current");
 
-  const status = await call(fixture.port, `${gateway}/dsh/status`);
-  assert.equal(status.status, 200, JSON.stringify(status.body));
-  assert.equal(status.body.state, "ready");
-  assert.equal(status.body.repo.name, "current");
+      const status = await call(fixture.port, `${gateway}/dsh/status`);
+      assert.equal(status.status, 200, JSON.stringify(status.body));
+      assert.equal(status.body.state, "ready");
+      assert.equal(status.body.repo.name, "current");
 
-  const repos = await call(fixture.port, `${gateway}/api/repos`);
-  assert.deepEqual(repos.body.map((repo) => repo.name), ["current"]);
+      const repos = await call(fixture.port, `${gateway}/api/repos`);
+      assert.deepEqual(
+        repos.body.map((repo) => repo.name),
+        ["current"],
+      );
 
-  const otherGateway = await issueGateway(fixture.port, "session-other");
-  const otherRepos = await call(fixture.port, `${otherGateway}/api/repos`);
-  assert.deepEqual(otherRepos.body.map((repo) => repo.name), ["other"]);
-  const currentReposAgain = await call(fixture.port, `${gateway}/api/repos`);
-  assert.deepEqual(currentReposAgain.body.map((repo) => repo.name), ["current"]);
-
-  const graph = await call(fixture.port, `${gateway}/api/graph?repo=other`);
-  assert.equal(graph.status, 200);
-  assert.equal(observed.at(-1).url.searchParams.get("repo"), "current");
-
-  const query = await call(fixture.port, `${gateway}/api/query`, {
-    method: "POST",
-    body: { repo: "other", query: "auth" },
-  });
-  assert.equal(query.status, 200);
-  assert.equal(JSON.parse(observed.at(-1).body).repo, "current");
-
-  assert.equal((await call(fixture.port, `${gateway}/api/embed`)).status, 403);
-  assert.equal((await call(fixture.port, `${gateway}/api/analyze/foreign`)).status, 404);
-  assert.equal(
-    (
-      await call(
+      const otherGateway = await issueGateway(fixture.port, "session-other");
+      const otherRepos = await call(fixture.port, `${otherGateway}/api/repos`);
+      assert.deepEqual(
+        otherRepos.body.map((repo) => repo.name),
+        ["other"],
+      );
+      const currentReposAgain = await call(
         fixture.port,
-        "/gitnexus/session/abcdefghijklmnopqrstuvwxyz123456/dsh/status",
-      )
-    ).status,
-    404,
+        `${gateway}/api/repos`,
+      );
+      assert.deepEqual(
+        currentReposAgain.body.map((repo) => repo.name),
+        ["current"],
+      );
+
+      const graph = await call(fixture.port, `${gateway}/api/graph?repo=other`);
+      assert.equal(graph.status, 200);
+      assert.equal(observed.at(-1).url.searchParams.get("repo"), "current");
+
+      const query = await call(fixture.port, `${gateway}/api/query`, {
+        method: "POST",
+        body: { repo: "other", query: "auth" },
+      });
+      assert.equal(query.status, 200);
+      assert.equal(JSON.parse(observed.at(-1).body).repo, "current");
+
+      assert.equal(
+        (await call(fixture.port, `${gateway}/api/embed`)).status,
+        403,
+      );
+      assert.equal(
+        (await call(fixture.port, `${gateway}/api/analyze/foreign`)).status,
+        404,
+      );
+      assert.equal(
+        (
+          await call(
+            fixture.port,
+            "/gitnexus/session/abcdefghijklmnopqrstuvwxyz123456/dsh/status",
+          )
+        ).status,
+        404,
+      );
+    },
   );
-});
 
-await t.test("accepts only server-resolved index-only analysis and preserves cancellation", async (t) => {
-  let fixture;
-  const fetchImplementation = async (input) => {
-    const url = new URL(String(input));
-    if (url.pathname === "/api/info") return jsonResponse({ version: "1.6.5" });
-    if (url.pathname === "/api/repos") return jsonResponse([]);
-    return jsonResponse({ error: "unexpected request" }, 500);
-  };
-  fixture = await createFixture(t, fetchImplementation);
-  await rm(join(fixture.current, ".git"), { recursive: true, force: true });
-  const gateway = await issueGateway(fixture.port, "session-current");
+  await t.test(
+    "accepts only server-resolved index-only analysis and preserves cancellation",
+    async (t) => {
+      let fixture;
+      const fetchImplementation = async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname === "/api/info")
+          return jsonResponse({ version: "1.6.5" });
+        if (url.pathname === "/api/repos") return jsonResponse([]);
+        return jsonResponse({ error: "unexpected request" }, 500);
+      };
+      fixture = await createFixture(t, fetchImplementation);
+      await rm(join(fixture.current, ".git"), { recursive: true, force: true });
+      const gateway = await issueGateway(fixture.port, "session-current");
 
-  const rejected = await call(fixture.port, `${gateway}/dsh/analyze`, {
-    method: "POST",
-    body: { path: fixture.other },
-  });
-  assert.equal(rejected.status, 400);
-  assert.equal(fixture.analysisCommands.length, 0);
+      const rejected = await call(fixture.port, `${gateway}/dsh/analyze`, {
+        method: "POST",
+        body: { path: fixture.other },
+      });
+      assert.equal(rejected.status, 400);
+      assert.equal(fixture.analysisCommands.length, 0);
 
-  const started = await call(fixture.port, `${gateway}/dsh/analyze`, {
-    method: "POST",
-    body: { force: false },
-  });
-  assert.equal(started.status, 202);
-  assert.deepEqual(fixture.analysisCommands, [
-    ["gitnexus", "analyze", "--index-only", "--skip-git", fixture.current],
-  ]);
+      const started = await call(fixture.port, `${gateway}/dsh/analyze`, {
+        method: "POST",
+        body: { force: false },
+      });
+      assert.equal(started.status, 202);
+      assert.deepEqual(fixture.analysisCommands, [
+        ["gitnexus", "analyze", "--index-only", "--skip-git", fixture.current],
+      ]);
 
-  const cancelled = await call(
-    fixture.port,
-    `${gateway}/dsh/analysis/${started.body.jobId}`,
-    { method: "DELETE" },
+      const cancelled = await call(
+        fixture.port,
+        `${gateway}/dsh/analysis/${started.body.jobId}`,
+        { method: "DELETE" },
+      );
+      assert.equal(cancelled.status, 202);
+      assert.equal(fixture.analysis.state(fixture.current).status, "cancelled");
+
+      const status = await call(fixture.port, `${gateway}/dsh/status`);
+      assert.equal(status.body.state, "cancelled");
+      assert.ok(fixture.evicted.includes(fixture.current));
+    },
   );
-  assert.equal(cancelled.status, 202);
-  assert.equal(fixture.analysis.state(fixture.current).status, "cancelled");
-
-  const status = await call(fixture.port, `${gateway}/dsh/status`);
-  assert.equal(status.body.state, "cancelled");
-  assert.ok(fixture.evicted.includes(fixture.current));
-});
 });

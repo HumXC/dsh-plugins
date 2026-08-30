@@ -3,13 +3,7 @@ import type { ConvViewProps } from "@deepseek-ai/dsh-client-ui-conversation/clie
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 interface WorkspaceStatus {
-  state:
-    | "unindexed"
-    | "analyzing"
-    | "ready"
-    | "stale"
-    | "failed"
-    | "cancelled";
+  state: "unindexed" | "analyzing" | "ready" | "stale" | "failed" | "cancelled";
   workspace: {
     name: string;
     path: string;
@@ -121,7 +115,9 @@ function StateCard(props: {
         boxShadow: "0 16px 44px rgb(0 0 0 / 18%)",
       }}
     >
-      <h2 style={{ margin: 0, color: colors.text, fontSize: 18 }}>{props.title}</h2>
+      <h2 style={{ margin: 0, color: colors.text, fontSize: 18 }}>
+        {props.title}
+      </h2>
       <p style={{ margin: "10px 0 0", color: colors.muted, lineHeight: 1.55 }}>
         {props.description}
       </p>
@@ -142,7 +138,9 @@ function StateCard(props: {
         </code>
       ) : null}
       {props.children ? (
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 20 }}>
+        <div
+          style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 20 }}
+        >
           {props.children}
         </div>
       ) : null}
@@ -158,37 +156,43 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
   const [showExistingGraph, setShowExistingGraph] = useState(false);
   const [confirmReanalysis, setConfirmReanalysis] = useState(false);
 
-  const connect = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch("/gitnexus/capability", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sessionId }),
-      cache: "no-store",
-      ...(signal ? { signal } : {}),
-    });
-    if (!response.ok) throw new Error(await responseError(response));
-    const value: unknown = await response.json();
-    if (!isCapability(value)) {
-      throw new Error("GitNexus capability response is invalid");
-    }
-    setGateway(value.gateway);
-    setError(undefined);
-  }, [sessionId]);
+  const connect = useCallback(
+    async (signal?: AbortSignal) => {
+      const response = await fetch("/gitnexus/capability", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+        cache: "no-store",
+        ...(signal ? { signal } : {}),
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      const value: unknown = await response.json();
+      if (!isCapability(value)) {
+        throw new Error("GitNexus capability response is invalid");
+      }
+      setGateway(value.gateway);
+      setError(undefined);
+    },
+    [sessionId],
+  );
 
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    if (!gateway) return;
-    const response = await fetch(`${gateway}/dsh/status`, {
-      cache: "no-store",
-      ...(signal ? { signal } : {}),
-    });
-    if (!response.ok) throw new Error(await responseError(response));
-    const value: unknown = await response.json();
-    if (!isWorkspaceStatus(value)) {
-      throw new Error("GitNexus workspace status response is invalid");
-    }
-    setStatus(value);
-    setError(undefined);
-  }, [gateway]);
+  const refresh = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!gateway) return;
+      const response = await fetch(`${gateway}/dsh/status`, {
+        cache: "no-store",
+        ...(signal ? { signal } : {}),
+      });
+      if (!response.ok) throw new Error(await responseError(response));
+      const value: unknown = await response.json();
+      if (!isWorkspaceStatus(value)) {
+        throw new Error("GitNexus workspace status response is invalid");
+      }
+      setStatus(value);
+      setError(undefined);
+    },
+    [gateway],
+  );
 
   useEffect(() => {
     const controller = new AbortController();
@@ -283,7 +287,13 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
 
   if (!status && !error) {
     return (
-      <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}>
+      <div
+        style={{
+          ...shellStyle,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         <div role="status" aria-live="polite" style={{ color: colors.muted }}>
           正在连接 GitNexus…
         </div>
@@ -293,7 +303,13 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
 
   if (error && !status) {
     return (
-      <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}>
+      <div
+        style={{
+          ...shellStyle,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         <StateCard title="无法打开 GitNexus" description={error} tone="danger">
           <button
             type="button"
@@ -301,7 +317,9 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
             onClick={() => {
               setError(undefined);
               void connect().catch((reason: unknown) => {
-                setError(reason instanceof Error ? reason.message : String(reason));
+                setError(
+                  reason instanceof Error ? reason.message : String(reason),
+                );
               });
             }}
           >
@@ -316,7 +334,13 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
 
   if (status.state === "unindexed") {
     return (
-      <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}>
+      <div
+        style={{
+          ...shellStyle,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         <StateCard
           title="当前工作区尚未分析"
           description="建立 GitNexus 索引后即可浏览代码关系图。插件只会分析下面这个 DSH 工作区。"
@@ -338,10 +362,19 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
   if (status.state === "analyzing") {
     const progress = status.analysis?.progress ?? 0;
     return (
-      <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}>
+      <div
+        style={{
+          ...shellStyle,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         <StateCard
           title="正在分析当前工作区"
-          description={status.analysis?.message ?? "GitNexus 正在建立代码图谱。关闭页面不会中止任务。"}
+          description={
+            status.analysis?.message ??
+            "GitNexus 正在建立代码图谱。关闭页面不会中止任务。"
+          }
           path={status.workspace.path}
         >
           <div style={{ width: "100%" }} aria-live="polite">
@@ -391,7 +424,13 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
     !(showExistingGraph && graphUrl)
   ) {
     return (
-      <div style={{ ...shellStyle, alignItems: "center", justifyContent: "center" }}>
+      <div
+        style={{
+          ...shellStyle,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
         <StateCard
           title={
             status.state === "cancelled"
@@ -459,7 +498,9 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
             当前工作区
           </span>
           {status.state === "stale" ? (
-            <span style={{ marginLeft: 9, color: colors.warning, fontSize: 12 }}>
+            <span
+              style={{ marginLeft: 9, color: colors.warning, fontSize: 12 }}
+            >
               索引需要更新
             </span>
           ) : null}
@@ -518,7 +559,13 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
           src={graphUrl}
           sandbox="allow-scripts allow-same-origin"
           referrerPolicy="no-referrer"
-          style={{ flex: 1, minHeight: 0, width: "100%", border: 0, background: colors.canvas }}
+          style={{
+            flex: 1,
+            minHeight: 0,
+            width: "100%",
+            border: 0,
+            background: colors.canvas,
+          }}
         />
       ) : null}
     </div>
@@ -528,8 +575,13 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
 async function webCapabilityAvailable(): Promise<boolean> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     try {
-      const response = await fetch("/gitnexus/capability", { cache: "no-store" });
-      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+      const response = await fetch("/gitnexus/capability", {
+        cache: "no-store",
+      });
+      if (
+        response.ok &&
+        response.headers.get("content-type")?.includes("application/json")
+      ) {
         const value: unknown = await response.json();
         if (
           value &&

@@ -36,15 +36,31 @@ test("selects only the repository whose canonical path matches the workspace", a
 
 test("denies global and mutating GitNexus APIs", () => {
   assert.deepEqual(classifyApiRequest("GET", "/api/repos"), { kind: "repos" });
-  assert.deepEqual(classifyApiRequest("GET", "/api/health"), { kind: "public" });
-  assert.deepEqual(classifyApiRequest("GET", "/api/graph"), { kind: "repo-get" });
-  assert.deepEqual(classifyApiRequest("POST", "/api/query"), { kind: "repo-post" });
-  assert.deepEqual(classifyApiRequest("DELETE", "/api/repo"), { kind: "denied" });
-  assert.deepEqual(classifyApiRequest("POST", "/api/analyze"), { kind: "denied" });
-  assert.deepEqual(classifyApiRequest("POST", "/api/analyze/upload"), { kind: "denied" });
-  assert.deepEqual(classifyApiRequest("POST", "/api/embed"), { kind: "denied" });
+  assert.deepEqual(classifyApiRequest("GET", "/api/health"), {
+    kind: "public",
+  });
+  assert.deepEqual(classifyApiRequest("GET", "/api/graph"), {
+    kind: "repo-get",
+  });
+  assert.deepEqual(classifyApiRequest("POST", "/api/query"), {
+    kind: "repo-post",
+  });
+  assert.deepEqual(classifyApiRequest("DELETE", "/api/repo"), {
+    kind: "denied",
+  });
+  assert.deepEqual(classifyApiRequest("POST", "/api/analyze"), {
+    kind: "denied",
+  });
+  assert.deepEqual(classifyApiRequest("POST", "/api/analyze/upload"), {
+    kind: "denied",
+  });
+  assert.deepEqual(classifyApiRequest("POST", "/api/embed"), {
+    kind: "denied",
+  });
   assert.deepEqual(classifyApiRequest("GET", "/api/mcp"), { kind: "denied" });
-  assert.deepEqual(classifyApiRequest("GET", "/api/unknown"), { kind: "denied" });
+  assert.deepEqual(classifyApiRequest("GET", "/api/unknown"), {
+    kind: "denied",
+  });
 });
 
 test("scopes repository API inputs on the server", () => {

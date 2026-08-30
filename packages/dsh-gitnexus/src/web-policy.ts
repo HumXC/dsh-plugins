@@ -38,7 +38,10 @@ export type ApiDecision =
   | { kind: "analysis"; jobId: string; progress: boolean }
   | { kind: "denied" };
 
-export function classifyApiRequest(method: string, pathname: string): ApiDecision {
+export function classifyApiRequest(
+  method: string,
+  pathname: string,
+): ApiDecision {
   const normalizedMethod = method.toUpperCase();
   if (normalizedMethod === "GET" && PUBLIC_GET_PATHS.has(pathname)) {
     return { kind: "public" };
@@ -57,10 +60,7 @@ export function classifyApiRequest(method: string, pathname: string): ApiDecisio
     /^\/api\/analyze\/([A-Za-z0-9_-]+)(\/progress)?$/,
   );
   const jobId = analysis?.[1];
-  if (
-    jobId &&
-    (normalizedMethod === "GET" || normalizedMethod === "DELETE")
-  ) {
+  if (jobId && (normalizedMethod === "GET" || normalizedMethod === "DELETE")) {
     return {
       kind: "analysis",
       jobId,

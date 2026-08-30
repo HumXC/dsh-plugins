@@ -170,12 +170,16 @@ function isJsonObject(value: unknown): value is JsonObject {
 function parseRepos(value: unknown): readonly GitNexusRepo[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((candidate) => {
-    if (!isJsonObject(candidate) || typeof candidate.name !== "string") return [];
+    if (!isJsonObject(candidate) || typeof candidate.name !== "string")
+      return [];
     const repo: GitNexusRepo = { name: candidate.name };
     if (typeof candidate.path === "string") repo.path = candidate.path;
-    if (typeof candidate.repoPath === "string") repo.repoPath = candidate.repoPath;
-    if (typeof candidate.indexedAt === "string") repo.indexedAt = candidate.indexedAt;
-    if (typeof candidate.lastCommit === "string") repo.lastCommit = candidate.lastCommit;
+    if (typeof candidate.repoPath === "string")
+      repo.repoPath = candidate.repoPath;
+    if (typeof candidate.indexedAt === "string")
+      repo.indexedAt = candidate.indexedAt;
+    if (typeof candidate.lastCommit === "string")
+      repo.lastCommit = candidate.lastCommit;
     if (candidate.stats !== undefined) repo.stats = candidate.stats;
     return [repo];
   });
@@ -199,7 +203,8 @@ async function readJsonBody(req: IncomingMessage): Promise<JsonObject> {
   } catch (error) {
     throw new Error("request body must contain valid JSON", { cause: error });
   }
-  if (!isJsonObject(parsed)) throw new Error("request body must be a JSON object");
+  if (!isJsonObject(parsed))
+    throw new Error("request body must be a JSON object");
   return parsed;
 }
 
@@ -224,7 +229,11 @@ async function pipeResponse(
 
   const headers: Record<string, string> = {};
   upstream.headers.forEach((value, key) => {
-    if (key === "content-length" || key === "content-encoding" || key === "transfer-encoding") {
+    if (
+      key === "content-length" ||
+      key === "content-encoding" ||
+      key === "transfer-encoding"
+    ) {
       return;
     }
     headers[key] = value;
@@ -286,7 +295,11 @@ export class GitNexusWebHost {
     try {
       body = await readJsonBody(req);
     } catch (error) {
-      sendError(res, 400, error instanceof Error ? error.message : String(error));
+      sendError(
+        res,
+        400,
+        error instanceof Error ? error.message : String(error),
+      );
       return;
     }
     if (typeof body.sessionId !== "string" || !body.sessionId) {
@@ -378,7 +391,9 @@ export class GitNexusWebHost {
     this.viewTokens.clear();
     const processes = [...this.analysisProcesses.values()];
     for (const process of processes) process.handle.terminate();
-    await Promise.all(processes.map(async ({ handle }) => handle.waitForExit()));
+    await Promise.all(
+      processes.map(async ({ handle }) => handle.waitForExit()),
+    );
     this.analysisProcesses.clear();
     await this.serve.dispose();
   }
@@ -419,7 +434,8 @@ export class GitNexusWebHost {
     await this.serve.ensureStarted();
     const route = resolveWorkspaceRoute(cwd);
     const response = await this.serve.request("/api/repos", { signal });
-    if (!response.ok) throw new Error("GitNexus could not list indexed repositories");
+    if (!response.ok)
+      throw new Error("GitNexus could not list indexed repositories");
     const repos = parseRepos(await response.json());
     const repo = await selectWorkspaceRepo(repos, route.root);
     return { route, repo, repos };
@@ -509,7 +525,11 @@ export class GitNexusWebHost {
     try {
       body = await readJsonBody(req);
     } catch (error) {
-      sendError(res, 400, error instanceof Error ? error.message : String(error));
+      sendError(
+        res,
+        400,
+        error instanceof Error ? error.message : String(error),
+      );
       return;
     }
     if (Object.keys(body).some((key) => key !== "force")) {
@@ -524,7 +544,10 @@ export class GitNexusWebHost {
     const root = workspace.route.root;
     const begin = this.analysis.begin(root);
     if (!begin.started) {
-      sendJson(res, 409, { error: "Analysis is already running", analysis: begin.state });
+      sendJson(res, 409, {
+        error: "Analysis is already running",
+        analysis: begin.state,
+      });
       return;
     }
 
@@ -588,7 +611,11 @@ export class GitNexusWebHost {
   ): Promise<void> {
     const decision = classifyApiRequest(req.method ?? "GET", gateway.suffix);
     if (decision.kind === "denied") {
-      sendError(res, 403, "This GitNexus API is unavailable in the DSH workspace view");
+      sendError(
+        res,
+        403,
+        "This GitNexus API is unavailable in the DSH workspace view",
+      );
       return;
     }
     if (decision.kind === "repos") {
@@ -598,7 +625,11 @@ export class GitNexusWebHost {
     if (decision.kind === "analysis") {
       const state = this.analysis.state(workspace.route.root);
       if (state?.jobId !== decision.jobId) {
-        sendError(res, 404, "Analysis job is not owned by the current workspace");
+        sendError(
+          res,
+          404,
+          "Analysis job is not owned by the current workspace",
+        );
         return;
       }
       if (req.method === "DELETE") {
@@ -637,7 +668,11 @@ export class GitNexusWebHost {
       try {
         parsed = await readJsonBody(req);
       } catch (error) {
-        sendError(res, 400, error instanceof Error ? error.message : String(error));
+        sendError(
+          res,
+          400,
+          error instanceof Error ? error.message : String(error),
+        );
         return;
       }
       body = JSON.stringify(forceRepoBody(parsed, workspace.repo.name));
@@ -664,7 +699,11 @@ export class GitNexusWebHost {
     workspace: WorkspaceContext,
   ): Promise<void> {
     if (!workspace.repo) {
-      sendError(res, 409, "Analyze the current workspace before opening the graph");
+      sendError(
+        res,
+        409,
+        "Analyze the current workspace before opening the graph",
+      );
       return;
     }
     const upstream = await this.serve.request(
@@ -682,7 +721,10 @@ export class GitNexusWebHost {
     handle: SubprocessHandle,
   ): Promise<void> {
     let stderrTail = "";
-    const updateFromOutput = (chunk: Buffer | string, isError: boolean): void => {
+    const updateFromOutput = (
+      chunk: Buffer | string,
+      isError: boolean,
+    ): void => {
       const text = chunk.toString();
       if (isError) {
         stderrTail = `${stderrTail}${text}`.slice(-MAX_ANALYSIS_ERROR_CHARS);
@@ -702,8 +744,10 @@ export class GitNexusWebHost {
         inferAnalysisProgress(message, state.progress ?? 5),
       );
     };
-    const onStdout = (chunk: Buffer | string): void => updateFromOutput(chunk, false);
-    const onStderr = (chunk: Buffer | string): void => updateFromOutput(chunk, true);
+    const onStdout = (chunk: Buffer | string): void =>
+      updateFromOutput(chunk, false);
+    const onStderr = (chunk: Buffer | string): void =>
+      updateFromOutput(chunk, true);
     handle.stdout?.on("data", onStdout);
     handle.stderr?.on("data", onStderr);
 
@@ -730,7 +774,10 @@ export class GitNexusWebHost {
       }
     } catch (error) {
       const state = this.analysis.state(root);
-      if (state?.jobId === jobId && ACTIVE_ANALYSIS_STATUSES.has(state.status)) {
+      if (
+        state?.jobId === jobId &&
+        ACTIVE_ANALYSIS_STATUSES.has(state.status)
+      ) {
         this.analysis.finish(
           root,
           "failed",

@@ -24,7 +24,10 @@ function createSubprocess(stderr = "") {
       terminated = true;
       resolveDone({ code: 0, signal: "SIGTERM" });
     },
-    waitForExit: async () => ({ code: 0, signal: terminated ? "SIGTERM" : null }),
+    waitForExit: async () => ({
+      code: 0,
+      signal: terminated ? "SIGTERM" : null,
+    }),
     collected: {
       stderr: {
         readFrom: () => ({ text: stderr }),

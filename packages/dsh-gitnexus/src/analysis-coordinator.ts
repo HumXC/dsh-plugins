@@ -25,9 +25,7 @@ export interface BeginAnalysisResult {
   state: WorkspaceAnalysisState;
 }
 
-type AnalysisListener = (
-  state: Readonly<WorkspaceAnalysisState>,
-) => void;
+type AnalysisListener = (state: Readonly<WorkspaceAnalysisState>) => void;
 
 type AnalysisProgress = Pick<
   WorkspaceAnalysisState,
