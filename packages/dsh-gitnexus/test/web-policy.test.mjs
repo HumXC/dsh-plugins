@@ -79,6 +79,7 @@ test("rewrites compatible GitNexus assets and injects session storage isolation"
   const html = [
     "<!doctype html>",
     "<html><head>",
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit">',
     "<title>GitNexus</title>",
     '<script type="module" src="/assets/app.js"></script>',
     '<link rel="stylesheet" href="/assets/app.css">',
@@ -89,6 +90,13 @@ test("rewrites compatible GitNexus assets and injects session storage isolation"
   const gateway = "/gitnexus/session/abcdefghijklmnopqrstuvwxyz123456";
   const rewritten = rewriteGitNexusIndex(html, gateway);
 
+  assert.ok(
+    rewritten.includes(
+      "<head><style>html,body{background-color:#06060a}</style>",
+    ),
+  );
+  assert.ok(rewritten.indexOf("</style>") < rewritten.indexOf("<link"));
+  assert.ok(rewritten.indexOf("</style>") < rewritten.indexOf("<script"));
   assert.match(rewritten, new RegExp(`${gateway}/assets/app\\.js`));
   assert.match(rewritten, new RegExp(`${gateway}/assets/app\\.css`));
   assert.match(rewritten, new RegExp(`${gateway}/dsh/bootstrap\\.js`));
@@ -104,6 +112,14 @@ test("rejects incompatible GitNexus Web assets", () => {
     () =>
       rewriteGitNexusIndex(
         "<html></html>",
+        "/gitnexus/session/abcdefghijklmnopqrstuvwxyz123456",
+      ),
+    /assets are incompatible/,
+  );
+  assert.throws(
+    () =>
+      rewriteGitNexusIndex(
+        '<title>GitNexus</title><script type="module" src="/assets/app.js"></script><div id="root"></div>',
         "/gitnexus/session/abcdefghijklmnopqrstuvwxyz123456",
       ),
     /assets are incompatible/,

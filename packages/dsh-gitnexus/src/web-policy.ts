@@ -118,6 +118,7 @@ export function rewriteGitNexusIndex(
 ): string {
   const normalizedPrefix = normalizedGatewayPrefix(gatewayPrefix);
   if (
+    !html.includes("<head>") ||
     !html.includes("<title>GitNexus</title>") ||
     !html.includes('<div id="root"></div>') ||
     !/<script\s+type="module"[^>]+src="\/assets\//.test(html)
@@ -128,6 +129,10 @@ export function rewriteGitNexusIndex(
   }
 
   const rewritten = html
+    .replace(
+      "<head>",
+      "<head><style>html,body{background-color:#06060a}</style>",
+    )
     .replaceAll('href="/assets/', `href="${normalizedPrefix}/assets/`)
     .replaceAll('src="/assets/', `src="${normalizedPrefix}/assets/`);
   return rewritten.replace(
