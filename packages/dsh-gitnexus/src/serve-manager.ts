@@ -2,6 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { SubprocessHandle } from "@deepseek-ai/dsh-subprocess";
 
 import type { ResolvedConfig } from "./config.js";
+import { prepareWorkspaceScope, workspaceRoot } from "./workspace-isolation.js";
 
 interface GitNexusInfo {
   version: string;
@@ -50,6 +51,7 @@ export class GitNexusServeManager {
   constructor(
     private readonly ctx: Context,
     private readonly config: ResolvedConfig,
+    private readonly root = workspaceRoot(process.cwd()),
   ) {
     this.baseUrl = `http://127.0.0.1:${config.servePort}`;
   }
@@ -63,7 +65,10 @@ export class GitNexusServeManager {
       throw new Error("dsh-gitnexus: GitNexus Web service is disposed");
     }
     const probe = await this.probeServer();
-    if (probe.kind === "compatible") return;
+    if (probe.kind === "compatible") {
+      if (!this.handle || !this.ownsProcess) throw new Error("Refusing to reuse an unscoped external GitNexus server");
+      return;
+    }
     if (probe.kind === "incompatible") {
       throw incompatibleVersionError(probe.version);
     }
@@ -120,7 +125,8 @@ export class GitNexusServeManager {
         "--port",
         String(this.config.servePort),
       ],
-      cwd: process.cwd(),
+      cwd: this.root,
+      env: prepareWorkspaceScope(this.root).env,
       stdio: {
         stdin: "ignore",
         stdout: { maxBytes: 64 * 1024 },

@@ -1,122 +1,51 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
-
 import { resolveConfig } from "../lib/config.js";
 import { GitNexusServeManager } from "../lib/serve-manager.js";
-
-function infoResponse(version) {
-  return new Response(JSON.stringify({ version }), {
-    status: 200,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function createSubprocess(stderr = "") {
-  let terminated = false;
-  let resolveDone;
-  const done = new Promise((resolve) => {
-    resolveDone = resolve;
-  });
-  const handle = {
-    done,
-    terminate() {
-      if (terminated) return;
-      terminated = true;
-      resolveDone({ code: 0, signal: "SIGTERM" });
-    },
-    waitForExit: async () => ({
-      code: 0,
-      signal: terminated ? "SIGTERM" : null,
-    }),
-    collected: {
-      stderr: {
-        readFrom: () => ({ text: stderr }),
-      },
-    },
+function fixture(t, { version = "1.6.10", external = false, timeout = false } = {}) {
+  const root = mkdtempSync(join(tmpdir(), "dsh-gitnexus-serve-"));
+  const previous = globalThis.fetch, spawns = [];
+  let terminated = false, settle;
+  const done = new Promise(resolve => { settle = resolve; });
+  const ctx = { subprocess: { spawn(spec) {
+    spawns.push(spec);
+    return { done, collected: { stderr: { readFrom: () => ({ text: "address unavailable" }) } },
+      terminate() { terminated = true; settle({ exitCode: null, signal: "SIGTERM" }); },
+      waitForExit: async () => { await done; return true; } };
+  } } };
+  globalThis.fetch = async () => {
+    if (timeout || (!external && spawns.length === 0)) throw new Error("connection refused");
+    return new Response(JSON.stringify({ version }), { headers: { "content-type": "application/json" } });
   };
-  let spawnCount = 0;
-  return {
-    context: {
-      subprocess: {
-        spawn() {
-          spawnCount += 1;
-          return handle;
-        },
-      },
-    },
-    get spawnCount() {
-      return spawnCount;
-    },
-    get terminated() {
-      return terminated;
-    },
-  };
+  const manager = new GitNexusServeManager(ctx, resolveConfig({ serveStartupTimeoutMs: timeout ? 20 : 1000 }), root);
+  t.after(async () => { await manager.dispose(); globalThis.fetch = previous; rmSync(root, { recursive: true, force: true }); });
+  return { manager, root, spawns, terminated: () => terminated };
 }
-
-function replaceFetch(t, implementation) {
-  const original = globalThis.fetch;
-  globalThis.fetch = implementation;
-  t.after(() => {
-    globalThis.fetch = original;
-  });
-}
-
-test("reuses a compatible GitNexus server without taking ownership", async (t) => {
-  replaceFetch(t, async () => infoResponse("1.6.5"));
-  const subprocess = createSubprocess();
-  const manager = new GitNexusServeManager(
-    subprocess.context,
-    resolveConfig({ servePort: 4747 }),
-  );
-
-  await manager.ensureStarted();
-  await manager.dispose();
-
-  assert.equal(subprocess.spawnCount, 0);
-  assert.equal(subprocess.terminated, false);
+test("refuses compatible but unscoped external GitNexus servers", async t => {
+  const f = fixture(t, { external: true });
+  await assert.rejects(f.manager.ensureStarted(), /unscoped external/);
+  assert.equal(f.spawns.length, 0);
+  assert.equal(f.terminated(), false);
 });
-
-test("starts and cleans up an owned GitNexus server", async (t) => {
-  let probes = 0;
-  replaceFetch(t, async () => {
-    probes += 1;
-    if (probes === 1) throw new Error("connection refused");
-    return infoResponse("1.6.9");
-  });
-  const subprocess = createSubprocess();
-  const manager = new GitNexusServeManager(
-    subprocess.context,
-    resolveConfig({ serveStartupTimeoutMs: 1_000 }),
-  );
-
-  await manager.ensureStarted();
-  assert.equal(subprocess.spawnCount, 1);
-  assert.equal(subprocess.terminated, false);
-
-  await manager.dispose();
-  assert.equal(subprocess.terminated, true);
+test("owned serve uses workspace cwd and local registry environment", async t => {
+  const f = fixture(t);
+  await f.manager.ensureStarted(); await f.manager.ensureStarted();
+  assert.equal(f.spawns.length, 1);
+  assert.equal(f.spawns[0].cwd, f.root);
+  assert.equal(f.spawns[0].env.GITNEXUS_HOME, join(f.root, ".gitnexus", "runtime"));
+  assert.equal(f.spawns[0].env.GITNEXUS_MCP_ALLOWED_REPOS, undefined);
+  await f.manager.dispose(); assert.equal(f.terminated(), true);
 });
-
-test("fails closed when an incompatible GitNexus server owns the port", async (t) => {
-  replaceFetch(t, async () => infoResponse("1.7.0"));
-  const subprocess = createSubprocess();
-  const manager = new GitNexusServeManager(subprocess.context, resolveConfig());
-
-  await assert.rejects(manager.ensureStarted(), /expected >=1\.6\.5 <1\.7\.0/);
-  assert.equal(subprocess.spawnCount, 0);
+test("fails closed for incompatible servers", async t => {
+  const f = fixture(t, { external: true, version: "1.7.0" });
+  await assert.rejects(f.manager.ensureStarted(), /unsupported/);
+  assert.equal(f.spawns.length, 0);
 });
-
-test("terminates an owned process after startup timeout", async (t) => {
-  replaceFetch(t, async () => {
-    throw new Error("connection refused");
-  });
-  const subprocess = createSubprocess("address unavailable");
-  const manager = new GitNexusServeManager(
-    subprocess.context,
-    resolveConfig({ serveStartupTimeoutMs: 20 }),
-  );
-
-  await assert.rejects(manager.ensureStarted(), /address unavailable/);
-  assert.equal(subprocess.spawnCount, 1);
-  assert.equal(subprocess.terminated, true);
+test("terminates owned process on startup timeout", async t => {
+  const f = fixture(t, { timeout: true });
+  await assert.rejects(f.manager.ensureStarted(), /address unavailable/);
+  assert.equal(f.terminated(), true);
 });

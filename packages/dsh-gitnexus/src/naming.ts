@@ -5,7 +5,7 @@ const MAX_PUBLIC_NAME_LENGTH = 64;
 const HASH_LENGTH = 12;
 
 export function publicToolName(serverName: string, rawName: string): string {
-  const joined = `mcp__${serverName}__${rawName}`;
+  const joined = `${serverName}_${rawName}`;
   const normalized = joined.replace(INVALID_NAME_CHARS, "_");
   if (normalized === joined && normalized.length <= MAX_PUBLIC_NAME_LENGTH)
     return normalized;

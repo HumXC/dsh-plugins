@@ -15,6 +15,7 @@ import type {
 export interface ManagedStdioOptions {
   argv: readonly string[];
   cwd: string;
+  env?: NodeJS.ProcessEnv;
   graceMs: number;
   stderrMaxBytes: number;
   signal: AbortSignal;
@@ -54,6 +55,7 @@ export class ManagedStdioTransport implements Transport {
     const handle = this.subprocess.spawn({
       argv: this.options.argv,
       cwd: this.options.cwd,
+      env: this.options.env,
       stdio: {
         stdin: "pipe",
         stdout: "pipe",

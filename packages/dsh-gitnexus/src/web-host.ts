@@ -2,7 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { SessionId } from "@deepseek-ai/dsh-session";
 import type { SubprocessHandle } from "@deepseek-ai/dsh-subprocess";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { once } from "node:events";
 import { randomBytes } from "node:crypto";
@@ -14,7 +14,8 @@ import type {
 import type { ResolvedConfig } from "./config.js";
 import type { McpConnectionRouter } from "./mcp-router.js";
 import { GitNexusServeManager } from "./serve-manager.js";
-import { resolveWorkspaceRoute, type WorkspaceRoute } from "./repository.js";
+import { canonicalWorkspacePath, type WorkspaceRoute } from "./repository.js";
+import { prepareWorkspaceScope, scopedToolArguments } from "./workspace-isolation.js";
 import {
   classifyApiRequest,
   forceRepoBody,
@@ -28,11 +29,25 @@ import {
 
 const GATEWAY_ROOT = "/gitnexus/session";
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
+
+function workspaceRouteForSessionCwd(cwd: string): WorkspaceRoute {
+  const canonicalCwd = canonicalWorkspacePath(cwd);
+  return {
+    cwd: canonicalCwd,
+    root: canonicalCwd,
+    hasIndex:
+      statSync(resolve(canonicalCwd, ".gitnexus"), { throwIfNoEntry: false })?.isDirectory() ===
+      true,
+  };
+}
+
 const VIEW_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 const MAX_VIEW_TOKENS = 256;
 const MAX_ANALYSIS_MESSAGE_CHARS = 240;
 const MAX_ANALYSIS_ERROR_CHARS = 8_000;
 const ACTIVE_ANALYSIS_STATUSES = new Set(["starting", "running"]);
+const HEALTH_PROBE_QUERY = "RETURN 1 AS ok";
+const HEALTH_PROBE_TIMEOUT_MS = 2_500;
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
@@ -103,6 +118,41 @@ function analysisJobPayload(state: WorkspaceAnalysisState): JsonObject {
     },
     ...(state.error ? { error: state.error } : {}),
   };
+}
+
+type WorkspaceProbeResult =
+  | { kind: "ready" }
+  | { kind: "unavailable"; reason: string; canRebuild: boolean }
+  | { kind: "aborted" };
+
+function isHealthProbeResponse(value: unknown): boolean {
+  if (!value || typeof value !== "object" || !("result" in value)) return false;
+  const result = value.result;
+  if (!Array.isArray(result) || result.length !== 1) return false;
+  const row = result[0];
+  return Boolean(row && typeof row === "object" && "ok" in row && row.ok === 1);
+}
+
+function isCheckpointReason(reason: string): boolean {
+  return reason.includes(
+    "Cannot open database in read-only mode while checkpoint is in progress",
+  );
+}
+
+function probeErrorReason(text: string, status: number): string {
+  try {
+    const value: unknown = JSON.parse(text);
+    if (
+      value &&
+      typeof value === "object" &&
+      "error" in value &&
+      typeof value.error === "string" &&
+      value.error
+    ) {
+      return value.error;
+    }
+  } catch {}
+  return text.trim() || `GitNexus health probe failed with HTTP ${status}`;
 }
 
 function latestOutputLine(text: string): string | undefined {
@@ -259,7 +309,7 @@ async function pipeResponse(
 }
 
 export class GitNexusWebHost {
-  private readonly serve: GitNexusServeManager;
+  private readonly serves = new Map<string, GitNexusServeManager>();
   private readonly viewTokens = new Map<string, ViewToken>();
   private readonly activeRequests = new Set<AbortController>();
   private readonly analysisProcesses = new Map<string, ActiveAnalysisProcess>();
@@ -271,19 +321,14 @@ export class GitNexusWebHost {
     private readonly analysis: AnalysisCoordinator,
     private readonly router: McpConnectionRouter,
   ) {
-    this.serve = new GitNexusServeManager(ctx, this.config);
   }
 
-  async handleCapability(
+  async handleSession(
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
     if (this.disposed) {
       sendError(res, 503, "GitNexus Web host is shutting down");
-      return;
-    }
-    if (req.method === "GET") {
-      sendJson(res, 200, { enabled: true });
       return;
     }
     if (req.method !== "POST") {
@@ -395,7 +440,8 @@ export class GitNexusWebHost {
       processes.map(async ({ handle }) => handle.waitForExit()),
     );
     this.analysisProcesses.clear();
-    await this.serve.dispose();
+    await Promise.all([...this.serves.values()].map(serve => serve.dispose()));
+    this.serves.clear();
   }
 
   private issueViewToken(sessionId: string): string {
@@ -431,12 +477,14 @@ export class GitNexusWebHost {
     cwd: string,
     signal: AbortSignal,
   ): Promise<WorkspaceContext> {
-    await this.serve.ensureStarted();
-    const route = resolveWorkspaceRoute(cwd);
-    const response = await this.serve.request("/api/repos", { signal });
-    if (!response.ok)
-      throw new Error("GitNexus could not list indexed repositories");
-    const repos = parseRepos(await response.json());
+    const scope = prepareWorkspaceScope(cwd);
+    const route = workspaceRouteForSessionCwd(scope.root);
+    const serve = this.getServe(scope.root);
+    await serve.ensureStarted();
+    const response = await serve.request("/api/repos", { signal });
+    if (!response.ok) throw new Error("GitNexus could not list indexed repositories");
+    const allowed = new Set(scope.repositories.map(repo => repo.path));
+    const repos = parseRepos(await response.json()).filter(repo => allowed.has(repo.repoPath ?? repo.path ?? ""));
     const repo = await selectWorkspaceRepo(repos, route.root);
     return { route, repo, repos };
   }
@@ -472,6 +520,105 @@ export class GitNexusWebHost {
       return;
     }
     sendError(res, 404, "Unknown GitNexus workspace operation");
+  }
+
+  private getServe(root: string): GitNexusServeManager {
+    let serve = this.serves.get(root);
+    if (!serve) {
+      const servePort = this.config.servePort + this.serves.size;
+      if (servePort > 65535) throw new Error("GitNexus workspace service port capacity exceeded");
+      serve = new GitNexusServeManager(this.ctx, { ...this.config, servePort }, root);
+      this.serves.set(root, serve);
+    }
+    return serve;
+  }
+
+  private async probeWorkspace(
+    repo: string,
+    root: string,
+    signal: AbortSignal,
+  ): Promise<WorkspaceProbeResult> {
+    if (signal.aborted) return { kind: "aborted" };
+    const controller = new AbortController();
+    let timedOut = false;
+    let resolveAbort: (() => void) | undefined;
+    const onAbort = (): void => {
+      controller.abort();
+      resolveAbort?.();
+    };
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutResult = new Promise<"timeout">((resolve) => {
+      timeoutId = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+        resolve("timeout");
+      }, HEALTH_PROBE_TIMEOUT_MS);
+    });
+    const abortResult = new Promise<"aborted">((resolve) => {
+      resolveAbort = () => resolve("aborted");
+    });
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      const response = await Promise.race([
+        this.getServe(root).request("/api/query", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ repo, cypher: HEALTH_PROBE_QUERY, params: {} }),
+          signal: controller.signal,
+        }),
+        timeoutResult,
+        abortResult,
+      ]);
+      if (response === "timeout") {
+        return {
+          kind: "unavailable",
+          reason: "GitNexus health probe timed out",
+          canRebuild: false,
+        };
+      }
+      if (response === "aborted") return { kind: "aborted" };
+      const text = await response.text();
+      if (!response.ok) {
+        const reason = probeErrorReason(text, response.status);
+        return {
+          kind: "unavailable",
+          reason,
+          canRebuild: isCheckpointReason(reason),
+        };
+      }
+      let value: unknown;
+      try {
+        value = JSON.parse(text);
+      } catch {
+        return {
+          kind: "unavailable",
+          reason: "GitNexus health probe returned invalid JSON",
+          canRebuild: false,
+        };
+      }
+      if (!isHealthProbeResponse(value)) {
+        return {
+          kind: "unavailable",
+          reason: "GitNexus health probe returned an invalid response shape",
+          canRebuild: false,
+        };
+      }
+      return { kind: "ready" };
+    } catch (error) {
+      if (signal.aborted) return { kind: "aborted" };
+      return {
+        kind: "unavailable",
+        reason: timedOut
+          ? "GitNexus health probe timed out"
+          : error instanceof Error
+            ? error.message
+            : String(error),
+        canRebuild: false,
+      };
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 
   private async sendWorkspaceStatus(
@@ -513,6 +660,18 @@ export class GitNexusWebHost {
         workspace.repo.lastCommit &&
         currentCommit !== workspace.repo.lastCommit,
     );
+    if (gateway.signal.aborted) return;
+    const probe = await this.probeWorkspace(workspace.repo.name, workspace.route.root, gateway.signal);
+    if (probe.kind === "aborted" || gateway.signal.aborted) return;
+    if (probe.kind === "unavailable") {
+      sendJson(res, 200, {
+        ...common,
+        state: "unavailable",
+        reason: probe.reason,
+        canRebuild: probe.canRebuild,
+      });
+      return;
+    }
     sendJson(res, 200, { ...common, state: stale ? "stale" : "ready" });
   }
 
@@ -565,6 +724,7 @@ export class GitNexusWebHost {
       const handle = this.ctx.subprocess.spawn({
         argv,
         cwd: root,
+        env: prepareWorkspaceScope(root).env,
         stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
         graceMs: 2_000,
       });
@@ -663,6 +823,10 @@ export class GitNexusWebHost {
     let body: string | undefined;
     if (decision.kind === "repo-get" && workspace.repo) {
       forceRepoQuery(upstreamUrl, workspace.repo.name);
+      for (const key of ["file", "file_path", "path", "worktree"]) {
+        if (upstreamUrl.searchParams.getAll(key).length > 1) throw new Error("Duplicate GitNexus path selector");
+      }
+      scopedToolArguments(prepareWorkspaceScope(workspace.route.root), "context", Object.fromEntries(upstreamUrl.searchParams));
     } else if (decision.kind === "repo-post" && workspace.repo) {
       let parsed: JsonObject;
       try {
@@ -675,17 +839,19 @@ export class GitNexusWebHost {
         );
         return;
       }
-      body = JSON.stringify(forceRepoBody(parsed, workspace.repo.name));
+      const forced = forceRepoBody(parsed, workspace.repo.name);
+      scopedToolArguments(prepareWorkspaceScope(workspace.route.root), "cypher", { ...forced, statement: forced.cypher ?? forced.statement });
+      body = JSON.stringify(forced);
     }
 
-    const upstream = await this.serve.request(
+    const upstream = await this.getServe(workspace.route.root).request(
       `${upstreamUrl.pathname}${upstreamUrl.search}`,
       {
         method: req.method ?? "GET",
         signal: gateway.signal,
         headers: {
           ...(body ? { "content-type": "application/json" } : {}),
-          ...(req.method === "DELETE" ? { origin: this.serve.origin } : {}),
+          ...(req.method === "DELETE" ? { origin: this.getServe(workspace.route.root).origin } : {}),
         },
         ...(body ? { body } : {}),
       },
@@ -706,7 +872,7 @@ export class GitNexusWebHost {
       );
       return;
     }
-    const upstream = await this.serve.request(
+    const upstream = await this.getServe(workspace.route.root).request(
       `${gateway.suffix}${gateway.url.search}`,
       { signal: gateway.signal },
     );
@@ -797,6 +963,7 @@ export class GitNexusWebHost {
     const handle = this.ctx.subprocess.spawn({
       argv: ["git", "-C", root, "rev-parse", "HEAD"],
       cwd: root,
+      env: prepareWorkspaceScope(root).env,
       stdio: {
         stdin: "ignore",
         stdout: { maxBytes: 4_096 },

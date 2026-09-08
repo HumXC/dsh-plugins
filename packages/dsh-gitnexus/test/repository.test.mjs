@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { resolveWorkspaceRoute } from "../lib/repository.js";
 
-test("prefers the nearest ancestor with a GitNexus index", () => {
+test("does not ascend to an ancestor GitNexus index", () => {
   const root = mkdtempSync(join(tmpdir(), "dsh-gitnexus-route-"));
   try {
     mkdirSync(join(root, ".gitnexus"));
@@ -15,8 +15,8 @@ test("prefers the nearest ancestor with a GitNexus index", () => {
 
     assert.deepEqual(resolveWorkspaceRoute(nested), {
       cwd: nested,
-      root,
-      hasIndex: true,
+      root: nested,
+      hasIndex: false,
     });
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -35,7 +35,7 @@ test("does not escape a git root to use an indexed parent directory", () => {
 
     assert.deepEqual(resolveWorkspaceRoute(nested), {
       cwd: nested,
-      root,
+      root: nested,
       hasIndex: false,
     });
   } finally {
@@ -43,7 +43,7 @@ test("does not escape a git root to use an indexed parent directory", () => {
   }
 });
 
-test("falls back to the git root when no GitNexus index exists", () => {
+test("does not ascend to a parent git root", () => {
   const root = mkdtempSync(join(tmpdir(), "dsh-gitnexus-route-"));
   try {
     writeFileSync(join(root, ".git"), "gitdir: elsewhere");
@@ -51,7 +51,7 @@ test("falls back to the git root when no GitNexus index exists", () => {
     mkdirSync(nested);
 
     const route = resolveWorkspaceRoute(nested);
-    assert.equal(route.root, root);
+    assert.equal(route.root, nested);
     assert.equal(route.hasIndex, false);
   } finally {
     rmSync(root, { recursive: true, force: true });

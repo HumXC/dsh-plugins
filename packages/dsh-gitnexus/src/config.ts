@@ -3,6 +3,9 @@ import z from "@deepseek-ai/schemastery";
 export type WebUiMode = "auto" | boolean;
 
 export interface Config {
+  accessMode?: "all" | "explicit-subagent-grant";
+  accessPreset?: string;
+  delegationTool?: string;
   command?: string;
   args?: string[];
   serverName?: string;
@@ -19,6 +22,9 @@ export interface Config {
 }
 
 export interface ResolvedConfig {
+  accessMode: "all" | "explicit-subagent-grant";
+  accessPreset: string;
+  delegationTool: string;
   command: string;
   args: readonly string[];
   serverName: string;
@@ -36,7 +42,10 @@ export interface ResolvedConfig {
 
 const SERVER_NAME_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
 
-export const Config = z.object({
+export const Config: z<Config, ResolvedConfig> = z.object({
+  accessMode: z.union([z.const("all"), z.const("explicit-subagent-grant")]).default("all"),
+  accessPreset: z.string().default("coding"),
+  delegationTool: z.string().default("explore_code"),
   command: z.string().default("gitnexus"),
   args: z.array(String).default(["mcp"]),
   serverName: z.string().pattern(SERVER_NAME_PATTERN).default("gitnexus"),
@@ -106,7 +115,22 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     throw new Error("dsh-gitnexus: webUi must be auto or a boolean");
   }
 
+  const accessMode = config.accessMode ?? "all";
+  if (accessMode !== "all" && accessMode !== "explicit-subagent-grant") {
+    throw new Error("dsh-gitnexus: invalid accessMode");
+  }
+  if (accessMode !== "all" && webUi !== false) {
+    throw new Error("dsh-gitnexus: restricted access requires webUi: false");
+  }
+  const accessPreset = config.accessPreset ?? "coding";
+  const delegationTool = config.delegationTool ?? "explore_code";
+  if (!accessPreset.trim() || !delegationTool.trim()) {
+    throw new Error("dsh-gitnexus: accessPreset and delegationTool must not be empty");
+  }
   return Object.freeze({
+    accessMode,
+    accessPreset,
+    delegationTool,
     command,
     args: Object.freeze([...args]),
     serverName,

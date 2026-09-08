@@ -1,0 +1,20 @@
+// IO body adapter for DSH's internal ToolRow (not publicly exported).
+// Uses its native layout and theme tokens, never generated CSS-module hashes.
+export const GITNEXUS_TOOL_CSS = ".gitnexus-tool-row{display:flex;flex-direction:column;min-width:0}"
++ ".gitnexus-tool-head{position:relative;overflow:hidden}"
++ ".gitnexus-tool-icon{width:18px;height:18px;flex-shrink:0}"
++ ".gitnexus-tool-title{font-weight:400}"
++ ".gitnexus-tool-chevron{color:var(--dsw-alias-label-secondary)}"
++ ".gitnexus-tool-sep{background:var(--dsw-alias-label-caption);border-radius:1px;flex:none;width:2px;height:2px;margin:0 8px}"
++ ".gitnexus-tool-summary{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:auto;font-size:var(--dsh-content-font-size-secondary,13px);line-height:calc(24px + var(--dsh-content-font-delta,0px));color:var(--dsw-alias-label-tertiary)}"
++ ".gitnexus-tool-warning{flex:none;margin-left:4px;color:var(--dsw-alias-label-secondary)}"
++ ".gitnexus-tool-row[data-state=error] .gitnexus-tool-summary,.gitnexus-tool-row[data-state=error] .gitnexus-tool-warning{color:var(--dsw-alias-state-error-primary)}"
++ ".gitnexus-tool-body{display:flex;flex-direction:column}"
++ ".gitnexus-tool-io{border:.5px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-markdown-code-block);font:var(--dsw-font-markdown-code-block-small);border-radius:12px;display:flex;flex-direction:column;margin:4px 0 4px 4px}"
++ ".gitnexus-tool-section{display:grid;grid-template-columns:max-content 1fr;align-items:baseline;column-gap:14px;max-height:150px;padding:12px 16px;overflow-y:auto}"
++ ".gitnexus-tool-label{color:var(--dsw-alias-label-caption);align-self:start;position:sticky;top:0}"
++ ".gitnexus-tool-divider{background:var(--dsw-alias-border-l2);flex:none;height:.5px}"
++ ".gitnexus-tool-text{white-space:pre-wrap;word-break:break-word;min-width:0;color:var(--dsw-alias-label-secondary)}"
++ ".gitnexus-tool-text[data-error]{color:var(--dsw-alias-state-error-primary)}"
++ ".gitnexus-tool-inspect{border:.5px solid var(--dsw-alias-border-l3);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-secondary);cursor:pointer;opacity:0;border-radius:999px;align-self:flex-start;margin:4px 0 2px 4px;padding:2px 8px;font-size:11px;line-height:16px}"
++ ".gitnexus-tool-row:hover .gitnexus-tool-inspect,.gitnexus-tool-inspect:focus-visible{opacity:1}";

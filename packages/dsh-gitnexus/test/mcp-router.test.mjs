@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { after } from "node:test";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const base = mkdtempSync(join(tmpdir(), "gitnexus-router-"));
+const repoA = join(base, "a"), repoB = join(base, "b");
+for (const root of [repoA, repoB]) { mkdirSync(join(root, ".gitnexus"), { recursive: true }); writeFileSync(join(root, ".gitnexus", "meta.json"), "{}"); }
+after(() => rmSync(base, { recursive: true, force: true }));
 import { AnalysisCoordinator } from "../lib/analysis-coordinator.js";
 import { resolveConfig } from "../lib/config.js";
 import { McpConnectionRouter } from "../lib/mcp-router.js";
@@ -18,10 +25,10 @@ test("does not evict a connection reserved by a concurrent tool call", async () 
     new AbortController().signal,
     () => {},
   );
-  router.connections.set("/repo-a", {
+  router.connections.set(repoA, {
     client: {
       callTool: () => firstCall,
-      close: async () => closed.push("/repo-a"),
+      close: async () => closed.push(repoA),
     },
     transport: { isClosed: false },
     activeCalls: 0,
@@ -29,13 +36,13 @@ test("does not evict a connection reserved by a concurrent tool call", async () 
   });
 
   const activeCall = router.callTool(
-    "/repo-a",
+    repoA,
     "query",
     {},
     new AbortController().signal,
   );
   await assert.rejects(
-    router.callTool("/repo-b", "query", {}, new AbortController().signal),
+    router.callTool(repoB, "query", {}, new AbortController().signal),
     /all 1 MCP connections are busy/,
   );
   assert.deepEqual(closed, []);
@@ -43,7 +50,7 @@ test("does not evict a connection reserved by a concurrent tool call", async () 
   finishFirst(callResult);
   assert.deepEqual(await activeCall, callResult);
   await router.dispose();
-  assert.deepEqual(closed, ["/repo-a"]);
+  assert.deepEqual(closed, [repoA]);
 });
 
 test("rejects calls and evicts an existing connection during analysis", async () => {
@@ -56,22 +63,22 @@ test("rejects calls and evicts an existing connection during analysis", async ()
     () => {},
     analysis,
   );
-  router.connections.set("/repo-a", {
+  router.connections.set(repoA, {
     client: {
-      close: async () => closed.push("/repo-a"),
+      close: async () => closed.push(repoA),
     },
     transport: { isClosed: false },
     activeCalls: 0,
     lastUsed: 0,
   });
 
-  analysis.begin("/repo-a");
+  analysis.begin(repoA);
   await assert.rejects(
-    router.callTool("/repo-a", "query", {}, new AbortController().signal),
+    router.callTool(repoA, "query", {}, new AbortController().signal),
     /being rebuilt/,
   );
-  await router.evict("/repo-a");
+  await router.evict(repoA);
 
-  assert.deepEqual(closed, ["/repo-a"]);
-  assert.equal(router.connections.has("/repo-a"), false);
+  assert.deepEqual(closed, [repoA]);
+  assert.equal(router.connections.has(repoA), false);
 });

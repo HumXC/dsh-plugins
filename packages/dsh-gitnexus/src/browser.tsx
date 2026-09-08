@@ -1,9 +1,11 @@
 import type { ClientContext } from "@deepseek-ai/dsh-client-runtime/client";
 import type { ConvViewProps } from "@deepseek-ai/dsh-client-ui-conversation/client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { registerGitNexusToolRows, GITNEXUS_TOOL_CSS } from "./tool-rows.js";
+import { workspaceDisplayName, workspaceDisplayMessage } from "./workspace-display.js";
 
 interface WorkspaceStatus {
-  state: "unindexed" | "analyzing" | "ready" | "stale" | "failed" | "cancelled";
+  state: "unindexed" | "analyzing" | "ready" | "stale" | "failed" | "cancelled" | "unavailable";
   workspace: {
     name: string;
     path: string;
@@ -22,6 +24,8 @@ interface WorkspaceStatus {
     message?: string;
     error?: string;
   };
+  reason?: string;
+  canRebuild?: boolean;
 }
 
 const colors = {
@@ -39,13 +43,27 @@ const colors = {
 function isWorkspaceStatus(value: unknown): value is WorkspaceStatus {
   if (!value || typeof value !== "object") return false;
   const candidate = value as Partial<WorkspaceStatus>;
-  return (
-    typeof candidate.state === "string" &&
-    Boolean(candidate.workspace) &&
-    typeof candidate.workspace?.name === "string" &&
-    typeof candidate.workspace.path === "string" &&
-    typeof candidate.gateway === "string"
-  );
+  const validState =
+    candidate.state === "unindexed" ||
+    candidate.state === "analyzing" ||
+    candidate.state === "ready" ||
+    candidate.state === "stale" ||
+    candidate.state === "failed" ||
+    candidate.state === "cancelled" ||
+    candidate.state === "unavailable";
+  if (
+    !validState ||
+    !candidate.workspace ||
+    typeof candidate.workspace.name !== "string" ||
+    typeof candidate.workspace.path !== "string" ||
+    typeof candidate.gateway !== "string" ||
+    (candidate.reason !== undefined && typeof candidate.reason !== "string") ||
+    (candidate.canRebuild !== undefined && typeof candidate.canRebuild !== "boolean")
+  ) {
+    return false;
+  }
+  return candidate.state !== "unavailable" ||
+    (typeof candidate.reason === "string" && typeof candidate.canRebuild === "boolean");
 }
 
 function isCapability(value: unknown): value is { gateway: string } {
@@ -119,7 +137,7 @@ function StateCard(props: {
         {props.title}
       </h2>
       <p style={{ margin: "10px 0 0", color: colors.muted, lineHeight: 1.55 }}>
-        {props.description}
+        {workspaceDisplayMessage(props.description, props.path)}
       </p>
       {props.path ? (
         <code
@@ -134,7 +152,7 @@ function StateCard(props: {
             overflowWrap: "anywhere",
           }}
         >
-          {props.path}
+          {workspaceDisplayName(props.path)}
         </code>
       ) : null}
       {props.children ? (
@@ -155,10 +173,25 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
   const [busy, setBusy] = useState(false);
   const [showExistingGraph, setShowExistingGraph] = useState(false);
   const [confirmReanalysis, setConfirmReanalysis] = useState(false);
+  const activeSessionId = useRef(sessionId);
+  const [previewGeneration, setPreviewGeneration] = useState(0);
+  const previousStatus = useRef<WorkspaceStatus>();
+  activeSessionId.current = sessionId;
+
+  useEffect(() => {
+    const previous = previousStatus.current;
+    if (
+      previous?.state === "analyzing" &&
+      (status?.state === "ready" || status?.state === "stale")
+    ) {
+      setPreviewGeneration((generation) => generation + 1);
+    }
+    previousStatus.current = status;
+  }, [status]);
 
   const connect = useCallback(
     async (signal?: AbortSignal) => {
-      const response = await fetch("/gitnexus/capability", {
+      const response = await fetch("/gitnexus/session/open", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ sessionId }),
@@ -168,10 +201,12 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
       if (!response.ok) throw new Error(await responseError(response));
       const value: unknown = await response.json();
       if (!isCapability(value)) {
-        throw new Error("GitNexus capability response is invalid");
+        throw new Error("GitNexus session response is invalid");
       }
-      setGateway(value.gateway);
-      setError(undefined);
+      if (!signal?.aborted && activeSessionId.current === sessionId) {
+        setGateway(value.gateway);
+        setError(undefined);
+      }
     },
     [sessionId],
   );
@@ -188,10 +223,12 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
       if (!isWorkspaceStatus(value)) {
         throw new Error("GitNexus workspace status response is invalid");
       }
-      setStatus(value);
-      setError(undefined);
+      if (!signal?.aborted && activeSessionId.current === sessionId) {
+        setStatus(value);
+        setError(undefined);
+      }
     },
-    [gateway],
+    [gateway, sessionId],
   );
 
   useEffect(() => {
@@ -220,17 +257,24 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
 
   useEffect(() => {
     if (status?.state !== "analyzing") return undefined;
+    const controller = new AbortController();
     const interval = window.setInterval(() => {
-      void refresh().catch((reason: unknown) => {
-        setError(reason instanceof Error ? reason.message : String(reason));
+      void refresh(controller.signal).catch((reason: unknown) => {
+        if (!controller.signal.aborted) {
+          setError(reason instanceof Error ? reason.message : String(reason));
+        }
       });
     }, 1_000);
-    return () => window.clearInterval(interval);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+    };
   }, [refresh, status?.state]);
 
   const analyze = useCallback(async () => {
     if (!gateway) return;
     setConfirmReanalysis(false);
+    setError(undefined);
     setBusy(true);
     try {
       const response = await fetch(`${gateway}/dsh/analyze`, {
@@ -287,7 +331,7 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
 
   if (!status && !error) {
     return (
-      <div
+      <div className="dsh-gitnexus-view"
         style={{
           ...shellStyle,
           alignItems: "center",
@@ -303,7 +347,7 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
 
   if (error && !status) {
     return (
-      <div
+      <div className="dsh-gitnexus-view"
         style={{
           ...shellStyle,
           alignItems: "center",
@@ -329,12 +373,59 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
       </div>
     );
   }
+  if (!status) return <div className="dsh-gitnexus-view" style={shellStyle} />;
 
-  if (!status) return <div style={shellStyle} />;
+  if (status.state === "unavailable") {
+    return (
+      <div
+        className="dsh-gitnexus-view"
+        style={{
+          ...shellStyle,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <StateCard
+          title="GitNexus 不可用"
+          description={error ?? status.reason ?? "无法验证 GitNexus 数据库状态。"}
+          path={status.workspace.path}
+          tone="danger"
+        >
+          {status.canRebuild ? (
+            <button
+              type="button"
+              style={buttonStyle(true)}
+              disabled={busy}
+              onClick={() => void analyze()}
+            >
+              {busy ? "正在启动…" : "重建索引"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              style={buttonStyle(false)}
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                setError(undefined);
+                void refresh()
+                  .catch((reason: unknown) => {
+                    setError(reason instanceof Error ? reason.message : String(reason));
+                  })
+                  .finally(() => setBusy(false));
+              }}
+            >
+              {busy ? "正在检查…" : "重试"}
+            </button>
+          )}
+        </StateCard>
+      </div>
+    );
+  }
 
   if (status.state === "unindexed") {
     return (
-      <div
+      <div className="dsh-gitnexus-view"
         style={{
           ...shellStyle,
           alignItems: "center",
@@ -362,7 +453,7 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
   if (status.state === "analyzing") {
     const progress = status.analysis?.progress ?? 0;
     return (
-      <div
+      <div className="dsh-gitnexus-view"
         style={{
           ...shellStyle,
           alignItems: "center",
@@ -421,10 +512,11 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
 
   if (
     (status.state === "failed" || status.state === "cancelled") &&
-    !(showExistingGraph && graphUrl)
+    !(showExistingGraph && graphUrl) &&
+    !confirmReanalysis
   ) {
     return (
-      <div
+      <div className="dsh-gitnexus-view"
         style={{
           ...shellStyle,
           alignItems: "center",
@@ -473,52 +565,7 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
   }
 
   return (
-    <div style={shellStyle}>
-      <header
-        style={{
-          flex: "none",
-          minHeight: 48,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          flexWrap: "wrap",
-          padding: "8px 12px",
-          borderBottom: `1px solid ${colors.border}`,
-          background: colors.panel,
-          boxSizing: "border-box",
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <strong style={{ fontSize: 13 }}>{status.workspace.name}</strong>
-          <span
-            title={status.workspace.path}
-            style={{ marginLeft: 9, color: colors.muted, fontSize: 12 }}
-          >
-            当前工作区
-          </span>
-          {status.state === "stale" ? (
-            <span
-              style={{ marginLeft: 9, color: colors.warning, fontSize: 12 }}
-            >
-              索引需要更新
-            </span>
-          ) : null}
-          {error ? (
-            <span style={{ marginLeft: 9, color: colors.danger, fontSize: 12 }}>
-              {error}
-            </span>
-          ) : null}
-        </div>
-        <button
-          type="button"
-          style={buttonStyle(false)}
-          disabled={busy}
-          onClick={() => setConfirmReanalysis(true)}
-        >
-          {busy ? "正在启动…" : "重新分析当前工作区"}
-        </button>
-      </header>
+    <div className="dsh-gitnexus-view" style={shellStyle}>
       {confirmReanalysis ? (
         <div
           style={{
@@ -555,6 +602,7 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
         </div>
       ) : graphUrl ? (
         <iframe
+          key={previewGeneration}
           title={`GitNexus：${status.workspace.name}`}
           src={graphUrl}
           sandbox="allow-scripts allow-same-origin"
@@ -572,45 +620,49 @@ function GitNexusView({ sessionId }: ConvViewProps): React.ReactElement {
   );
 }
 
-async function webCapabilityAvailable(): Promise<boolean> {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    try {
-      const response = await fetch("/gitnexus/capability", {
-        cache: "no-store",
-      });
-      if (
-        response.ok &&
-        response.headers.get("content-type")?.includes("application/json")
-      ) {
-        const value: unknown = await response.json();
-        if (
-          value &&
-          typeof value === "object" &&
-          "enabled" in value &&
-          value.enabled === true
-        ) {
-          return true;
-        }
-      }
-    } catch {
-      // The host plugin may still be registering while the Web client boots.
-    }
-    await new Promise((resolve) => window.setTimeout(resolve, 250));
-  }
-  return false;
+const GITNEXUS_CSS_ID = "dsh-gitnexus/preview.css";
+const GITNEXUS_CSS = `
+.dsh-gitnexus-view {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
 }
+[data-conversation-scroll]:has(.dsh-gitnexus-view) > [data-composer-seat]:not(:has([data-approval-key], [data-question-key], [data-plan-review-key])) {
+  display: none;
+}
+`;
 
 export const inject = ["slots"];
 
-export async function apply(ctx: ClientContext): Promise<void> {
-  if (!(await webCapabilityAvailable())) return;
-  ctx.slots.register(
-    {
-      name: "conversation.view",
-      id: "gitnexus",
-      label: "GitNexus",
-      order: 20,
-    },
-    GitNexusView,
-  );
+type GitNexusClientContext = Pick<ClientContext, "effect" | "slots">;
+
+export function apply(ctx: GitNexusClientContext): void {
+  registerGitNexusToolRows(ctx);
+  ctx.effect(() => {
+    // Delivered by the host's structured index-injection channel, not a probe.
+    const config = (globalThis as typeof globalThis & {
+      __DSH_GITNEXUS_CONFIG__?: { webUi: boolean };
+    }).__DSH_GITNEXUS_CONFIG__;
+    const disposeRegistration = config?.webUi === true
+      ? ctx.slots.inject("conversation.view", () =>
+          ctx.slots.register(
+            { name: "conversation.view", id: "gitnexus", label: "GitNexus", order: 20 },
+            GitNexusView,
+          ),
+        )
+      : undefined;
+
+    let style: HTMLStyleElement | undefined;
+    if (typeof document !== "undefined") {
+      style = document.createElement("style");
+      style.dataset.plugin = "dsh-gitnexus";
+      style.dataset.pluginCss = GITNEXUS_CSS_ID;
+      style.textContent = GITNEXUS_CSS + GITNEXUS_TOOL_CSS;
+      document.head.appendChild(style);
+    }
+    return () => {
+      disposeRegistration?.();
+      style?.remove();
+    };
+  }, "dsh-gitnexus: register configured conversation view");
 }

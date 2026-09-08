@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,6 +10,7 @@ import { resolveConfig } from "../lib/config.js";
 test("adds GitNexus context once per session and pattern", async () => {
   const root = mkdtempSync(join(tmpdir(), "dsh-gitnexus-augment-"));
   mkdirSync(join(root, ".gitnexus"));
+  writeFileSync(join(root, ".gitnexus", "meta.json"), "{}");
   const listeners = new Map();
   const spawns = [];
   const ctx = {
@@ -86,6 +87,7 @@ test("adds GitNexus context once per session and pattern", async () => {
     );
     assert.deepEqual(spawns[0].argv, ["gitnexus", "augment", "AuthService"]);
     assert.equal(spawns[0].cwd, root);
+    assert.equal(spawns[0].env.GITNEXUS_HOME, join(root, ".gitnexus", "runtime"));
 
     const second = await listener(exec, result, async () => ({
       kind: "accept",

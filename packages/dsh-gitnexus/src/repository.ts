@@ -1,5 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
+import { workspaceRoot, workspacePath } from "./workspace-isolation.js";
 
 export interface WorkspaceRoute {
   cwd: string;
@@ -17,26 +18,14 @@ export function canonicalWorkspacePath(path: string): string {
 }
 
 export function resolveWorkspaceRoute(cwd: string): WorkspaceRoute {
-  const canonicalCwd = canonicalWorkspacePath(cwd);
-  let directory = canonicalCwd;
-
-  while (true) {
-    if (existsSync(resolve(directory, ".gitnexus"))) {
-      return { cwd: canonicalCwd, root: directory, hasIndex: true };
-    }
-    if (existsSync(resolve(directory, ".git"))) {
-      return { cwd: canonicalCwd, root: directory, hasIndex: false };
-    }
-
-    const parent = dirname(directory);
-    if (parent === directory) break;
-    directory = parent;
-  }
-
+  const canonicalCwd = workspaceRoot(cwd);
+  workspacePath(canonicalCwd, ".gitnexus");
+  workspacePath(canonicalCwd, ".gitnexus/gitnexus.json");
+  workspacePath(canonicalCwd, ".gitnexus/meta.json");
   return {
     cwd: canonicalCwd,
     root: canonicalCwd,
-    hasIndex: false,
+    hasIndex: existsSync(resolve(canonicalCwd, ".gitnexus", "gitnexus.json")) || existsSync(resolve(canonicalCwd, ".gitnexus", "meta.json")),
   };
 }
 

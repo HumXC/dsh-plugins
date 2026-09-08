@@ -3,6 +3,8 @@ import type { SubprocessRuntime } from "@deepseek-ai/dsh-subprocess";
 import { AnalysisCoordinator } from "./analysis-coordinator.js";
 import type { ResolvedConfig } from "./config.js";
 import { ManagedStdioTransport } from "./managed-stdio-transport.js";
+import { prepareWorkspaceScope, scopedToolArguments } from "./workspace-isolation.js";
+import { validateRenamePaths } from "./rename-preflight.js";
 
 export type ListedMcpTool = Awaited<
   ReturnType<Client["listTools"]>
@@ -46,7 +48,16 @@ export class McpConnectionRouter {
     signal: AbortSignal,
   ): Promise<McpCallResult> {
     this.assertAvailable(cwd);
+    const scope = prepareWorkspaceScope(cwd);
+    args = scopedToolArguments(scope, rawName, args);
     return this.withConnection(cwd, async (slot) => {
+      if (rawName === "rename") {
+        await validateRenamePaths(scope, String(args.repo), statement => slot.client.callTool(
+          { name: "cypher", arguments: { repo: args.repo, statement } },
+          undefined,
+          { signal, timeout: this.config.toolCallTimeoutMs },
+        ));
+      }
       return slot.client.callTool(
         { name: rawName, arguments: args },
         undefined,
@@ -176,9 +187,11 @@ export class McpConnectionRouter {
   }
 
   private async connect(cwd: string): Promise<ConnectionSlot> {
+    const scope = prepareWorkspaceScope(cwd);
     const transport = new ManagedStdioTransport(this.subprocess, {
       argv: [this.config.command, ...this.config.args],
-      cwd,
+      cwd: scope.root,
+      env: scope.env,
       graceMs: 1_000,
       stderrMaxBytes: 64 * 1024,
       signal: this.lifetimeSignal,

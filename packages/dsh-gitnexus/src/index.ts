@@ -5,9 +5,9 @@ import type { ContentBlock } from "@deepseek-ai/dsh-llm";
 import type {
   JsonValue,
   ToolDefinition,
-  ToolRunContext,
 } from "@deepseek-ai/dsh-tools";
 import { AnalysisCoordinator } from "./analysis-coordinator.js";
+import { GitNexusAccess, INDEX_STATUS_TOOL } from "./access.js";
 import { AutoAugmentController } from "./augment.js";
 import { Config, resolveConfig } from "./config.js";
 import type { Config as PluginConfig, ResolvedConfig } from "./config.js";
@@ -16,6 +16,8 @@ import type { ListedMcpTool, McpCallResult } from "./mcp-router.js";
 import { publicToolName } from "./naming.js";
 import { resolveWorkspaceRoute, sessionCwd } from "./repository.js";
 import { GitNexusWebHost } from "./web-host.js";
+import { NATIVE_COMMANDS } from "./commands.js";
+import { commandArguments } from "./arguments.js";
 
 export { Config };
 export type { PluginConfig as ConfigOptions, ResolvedConfig };
@@ -31,8 +33,8 @@ export const name = "dsh-gitnexus";
 export const inject = ["tools", "subprocess"];
 
 interface RoutedMcpValue {
-  content: JsonValue[];
-  structuredContent?: JsonValue;
+  text: string;
+  data?: JsonValue;
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -94,77 +96,93 @@ function normalizeMcpResult(
   rawName: string,
 ): RoutedMcpValue {
   if ("toolResult" in result) {
-    return { content: [{ type: "text", text: jsonText(result.toolResult) }] };
+    return { text: jsonText(result.toolResult), data: result.toolResult as JsonValue };
   }
-
-  const content = result.content as JsonValue[];
-  if (result.isError === true) {
-    throw new Error(renderMcpContent(content, rawName));
-  }
-  const normalized: RoutedMcpValue = { content };
+  const text = renderMcpContent(result.content, rawName);
+  if (result.isError === true) throw new Error(text);
+  const normalized: RoutedMcpValue = { text };
   if (result.structuredContent !== undefined) {
-    normalized.structuredContent = result.structuredContent as JsonValue;
+    normalized.data = result.structuredContent as JsonValue;
+    const structuredText = jsonText(normalized.data);
+    if (!text.includes(structuredText)) {
+      normalized.text = text ? `${text}\n\n${structuredText}` : structuredText;
+    }
+  } else {
+    // GitNexus appends a next-step footer after its JSON payload. Keep the full
+    // text (including risk caveats) even when extracting machine-readable data.
+    try { normalized.data = JSON.parse(text.split("\n\n---\n", 1)[0]!) as JsonValue; } catch { /* Text-only result. */ }
   }
   return normalized;
 }
 
-function outputContent(value: JsonValue, rawName: string): ContentBlock[] {
+function outputContent(value: JsonValue): ContentBlock[] {
   const object = record(value);
-  const content = Array.isArray(object?.content) ? object.content : [];
-  return [{ type: "text", text: renderMcpContent(content, rawName) }];
+  return [{ type: "text", text: typeof object?.text === "string" ? object.text : jsonText(value) }];
 }
 
 function toolArguments(value: unknown): Record<string, unknown> {
   return record(value) ?? {};
 }
 
-function routedToolDefinition(
+export function routedToolDefinition(
   tool: ListedMcpTool,
   router: McpConnectionRouter,
   config: ResolvedConfig,
+  access = new GitNexusAccess(config),
 ): ToolDefinition {
-  const publicName = publicToolName(config.serverName, tool.name);
-  const definition = {
+  const command = NATIVE_COMMANDS.find(command => command.name === tool.name);
+  if (command === undefined) throw new Error("Unsupported native GitNexus tool: " + tool.name);
+  const publicName = publicToolName(config.serverName, command.name);
+  return {
     name: publicName,
-    description: tool.description ?? `GitNexus MCP tool ${tool.name}`,
-    parameters: tool.inputSchema,
+    description: command.description,
+    parameters: command.parameters,
     output: {
       schema: {
         type: "object",
         properties: {
-          content: { type: "array", items: {} },
-          structuredContent: {},
+          text: { type: "string", description: "Complete result text, including warnings and completeness limits." },
+          data: { description: "Parsed JSON evidence when available; never replaces text warnings." },
         },
-        required: ["content"],
+        required: ["text"],
         additionalProperties: false,
       },
-      render: (_args, value) => outputContent(value, tool.name),
+      render: (_args, value) => outputContent(value),
     },
-    timeoutMs: config.toolCallTimeoutMs,
-    async execute(
-      args: unknown,
-      exec: ToolRunContext,
-    ): Promise<RoutedMcpValue> {
+    presentCall(args) {
+      const input = toolArguments(args);
+      const preview = command.name === "rename" && input.dry_run !== false;
+      return {
+        card: "generic",
+        title: command.title + (preview ? " · Preview" : ""),
+        kind: command.name === "rename" && !preview ? "edit" : "search",
+        rawInput: args,
+      };
+    },
+    presentResult(_args, result) {
+      return {
+        card: "generic",
+        title: command.title + (result.isError ? " · Failed" : " · Result"),
+        content: result.content,
+      };
+    },
+    async execute(args, exec) {
+      access.assert(exec.agent, publicName);
       if (tool.execution?.taskSupport === "required") {
-        throw new Error(
-          `GitNexus tool "${tool.name}" requires unsupported MCP task execution`,
-        );
+        throw new Error("GitNexus tool requires unsupported MCP task execution: " + tool.name);
       }
-      const cwd = sessionCwd(exec.agent) ?? process.cwd();
+      const cwd = sessionCwd(exec.agent);
+      if (!cwd) throw new Error("GitNexus requires a session workspace");
       const route = resolveWorkspaceRoute(cwd);
       const result = await router.callTool(
         route.root,
-        tool.name,
-        toolArguments(args),
+        command.name,
+        commandArguments(command.name, toolArguments(args), route.root),
         exec.signal,
       );
-      return normalizeMcpResult(result, tool.name);
+      return normalizeMcpResult(result, command.name);
     },
   } satisfies ToolDefinition;
-  if (tool.annotations?.readOnlyHint === true) {
-    return { ...definition, isConcurrencySafe: () => true };
-  }
-  return definition;
 }
 
 export async function apply(
@@ -172,6 +190,12 @@ export async function apply(
   rawConfig: PluginConfig = {},
 ): Promise<void> {
   const config = resolveConfig(rawConfig);
+  // Only display permission crosses DSH's structured HTML bootstrap channel.
+  // Register before async discovery, including when the Web view is disabled.
+  ctx.on("webserver/index-inject", (rows) => {
+    rows.push({ kind: "global", name: "__DSH_GITNEXUS_CONFIG__", value: { webUi: config.webUi !== false } });
+  });
+  const access = new GitNexusAccess(config);
   const lifetime = new AbortController();
   const analysis = new AnalysisCoordinator();
   const router = new McpConnectionRouter(
@@ -188,8 +212,10 @@ export async function apply(
     const discoveryRoute = resolveWorkspaceRoute(process.cwd());
     const tools = await router.discoverTools(discoveryRoute.root);
     const names = new Set<string>();
-    for (const tool of tools) {
-      const publicName = publicToolName(config.serverName, tool.name);
+    for (const command of NATIVE_COMMANDS) {
+      const tool = tools.find(tool => tool.name === command.name);
+      if (tool === undefined) throw new Error("GitNexus backend is missing required tool: " + command.name);
+      const publicName = publicToolName(config.serverName, command.name);
       if (names.has(publicName)) {
         throw new Error(
           `dsh-gitnexus: GitNexus listed duplicate tool "${tool.name}"`,
@@ -197,12 +223,35 @@ export async function apply(
       }
       names.add(publicName);
       disposers.push(
-        ctx.tools.register(routedToolDefinition(tool, router, config)),
+        ctx.tools.register(routedToolDefinition(tool, router, config, access)),
       );
     }
 
+    if (config.accessMode !== "all") {
+      if (names.has(INDEX_STATUS_TOOL)) throw new Error("GitNexus index status name collision");
+      names.add(INDEX_STATUS_TOOL);
+      disposers.push(ctx.tools.register({
+        name: INDEX_STATUS_TOOL,
+        description: "Read the current workspace index-directory presence. This does not establish freshness; request index maintenance through the main agent when missing or stale.",
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+        output: {
+          schema: { type: "object", properties: { root: { type: "string" }, hasIndex: { type: "boolean" } }, required: ["root", "hasIndex"], additionalProperties: false },
+          render: (_args, value) => [{ type: "text", text: jsonText(value) }],
+        },
+        isConcurrencySafe: () => true,
+        async execute(_args, exec) {
+          access.assert(exec.agent, INDEX_STATUS_TOOL);
+          const cwd = sessionCwd(exec.agent);
+          if (cwd === undefined) throw new Error("GitNexus index status requires a session workspace");
+          const { root, hasIndex } = resolveWorkspaceRoute(cwd);
+          return { root, hasIndex };
+        },
+      }));
+      disposers.push(access.install(ctx, [...names]));
+    }
+
     if (config.autoAugment) {
-      augmenter = new AutoAugmentController(ctx, config, analysis);
+      augmenter = new AutoAugmentController(ctx, config, analysis, access);
       augmenter.start();
     }
 
@@ -215,8 +264,8 @@ export async function apply(
         const webHost = new GitNexusWebHost(webCtx, config, analysis, router);
         const disposeCapability = webServer.register({
           kind: "exact",
-          path: "/gitnexus/capability",
-          handler: (req, res) => webHost.handleCapability(req, res),
+          path: "/gitnexus/session/open",
+          handler: (req, res) => webHost.handleSession(req, res),
         });
         const disposeGateway = webServer.register({
           kind: "prefix",

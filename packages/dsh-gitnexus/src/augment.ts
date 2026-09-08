@@ -6,9 +6,11 @@ import type {
   ToolExecutionResult,
 } from "@deepseek-ai/dsh-tools";
 import { AnalysisCoordinator } from "./analysis-coordinator.js";
+import { GitNexusAccess } from "./access.js";
 import type { ResolvedConfig } from "./config.js";
 import { augmentationCandidates, isAugmentableTool } from "./patterns.js";
 import { resolveWorkspaceRoute, sessionCwd } from "./repository.js";
+import { prepareWorkspaceScope } from "./workspace-isolation.js";
 
 interface PatternCache {
   augmented: Set<string>;
@@ -35,6 +37,7 @@ export class AutoAugmentController {
     private readonly ctx: Context,
     private readonly config: ResolvedConfig,
     private readonly analysis = new AnalysisCoordinator(),
+    private readonly access = new GitNexusAccess(config),
   ) {}
 
   start(): void {
@@ -65,6 +68,7 @@ export class AutoAugmentController {
     next: () => Promise<PostToolDecision>,
   ): Promise<PostToolDecision> {
     const downstream = await next();
+    if (!this.access.allows(exec.agent)) return downstream;
     if (downstream.kind !== "accept") return downstream;
     if (this.lifetime.signal.aborted || exec.signal.aborted) return downstream;
     if (result.isError || !isAugmentableTool(exec.name)) return downstream;
@@ -179,6 +183,7 @@ export class AutoAugmentController {
       const handle = this.ctx.subprocess.spawn({
         argv: [this.config.command, "augment", pattern],
         cwd,
+        env: prepareWorkspaceScope(cwd).env,
         stdio: {
           stdin: "ignore",
           stdout: { maxBytes: this.config.maxContextChars * 4 },

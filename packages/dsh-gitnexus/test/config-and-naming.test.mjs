@@ -38,8 +38,8 @@ test("rejects invalid process and capacity settings", () => {
   );
 });
 
-test("keeps safe MCP names and hashes normalized long names", () => {
-  assert.equal(publicToolName("gitnexus", "query"), "mcp__gitnexus__query");
+test("keeps native names and hashes normalized long names", () => {
+  assert.equal(publicToolName("gitnexus", "query"), "gitnexus_query");
   const normalized = publicToolName("server", "name with spaces/".repeat(8));
   assert.match(normalized, /^[A-Za-z0-9_-]+$/);
   assert.equal(normalized.length, 64);
