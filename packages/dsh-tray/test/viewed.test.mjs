@@ -45,3 +45,24 @@ test("损坏账本容忍:loadAll 抛错 → 空账本,不阻塞", async () => {
   const store = await ViewedStore.open(bad);
   assert.equal(store.snapshot().size, 0);
 });
+
+test("close waits for queued viewed writes", async () => {
+  const events = [];
+  let finishWrite;
+  const unit = {
+    async loadAll() { return { tables: {}, global: undefined }; },
+    putRecord() {
+      events.push("put-start");
+      return new Promise(resolve => { finishWrite = () => { events.push("put-done"); resolve(); }; });
+    },
+    async close() { events.push("close"); },
+  };
+  const store = await ViewedStore.open(unit);
+  store.markViewed("s1", 123);
+  const closing = store.close();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(events, ["put-start"]);
+  finishWrite();
+  await closing;
+  assert.deepEqual(events, ["put-start", "put-done", "close"]);
+});

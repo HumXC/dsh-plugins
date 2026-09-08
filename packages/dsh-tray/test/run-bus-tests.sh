@@ -20,4 +20,6 @@ ADDR="$(cat "$ADDR_FILE")"
 [ -n "$ADDR" ] || { echo "dbus-daemon 启动失败" >&2; exit 2; }
 export DBUS_SESSION_BUS_ADDRESS="$ADDR"
 cd "$DIR"
-node --test test/*.test.mjs
+for test_file in test/*.test.mjs; do
+  node --import ./test/process-isolation.mjs "$test_file"
+done

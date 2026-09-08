@@ -16,6 +16,9 @@ const VIEWED_UNIT = "dsh_tray";
 
 export class ViewedStore implements ViewedStoreLike {
   private map = new Map<string, number>();
+  private writeQueue: Promise<void> = Promise.resolve();
+  private closed = false;
+  private closePromise: Promise<void> | undefined;
 
   private constructor(private unit: KvUnitLike) {}
 
@@ -42,9 +45,13 @@ export class ViewedStore implements ViewedStoreLike {
 
   markViewed(id: string, at = Date.now()): void {
     this.map.set(id, at);
-    // 异步落盘,失败不回滚内存
-    void this.unit.putRecord(VIEWED_TABLE, id, { at }).catch((err: unknown) => {
-      console.warn("[dsh-tray] viewed 落盘失败:", (err as Error).message);
+    if (this.closed) return;
+    this.writeQueue = this.writeQueue.then(async () => {
+      try {
+        await this.unit.putRecord(VIEWED_TABLE, id, { at });
+      } catch (err: unknown) {
+        console.warn("[dsh-tray] viewed 落盘失败:", (err as Error).message);
+      }
     });
   }
 
@@ -54,6 +61,10 @@ export class ViewedStore implements ViewedStoreLike {
   }
 
   close(): Promise<void> {
-    return this.unit.close();
+    if (!this.closePromise) {
+      this.closed = true;
+      this.closePromise = this.writeQueue.then(() => this.unit.close());
+    }
+    return this.closePromise;
   }
 }

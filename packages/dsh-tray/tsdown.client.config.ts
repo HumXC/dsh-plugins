@@ -13,6 +13,8 @@ export default defineConfig({
   sourcemap: false,
   deps: {
     neverBundle: true,
+    // The browser module table exposes DSH clients, not arbitrary npm dependencies.
+    alwaysBundle: [/^zod(?:[/]|$)/],
   },
   checks: {
     legacyCjs: false,
