@@ -8,6 +8,9 @@ import { validateRenamePaths } from "../lib/rename-preflight.js";
 import { McpConnectionRouter } from "../lib/mcp-router.js";
 import { resolveConfig } from "../lib/config.js";
 const reply = (paths, extra = {}) => ({ content: [{ type: "text", text: JSON.stringify({ markdown: "| paths |\n| --- |\n| " + JSON.stringify(paths) + " |", row_count: 1, ...extra }) + "\nNext: context({name: ...})" }] });
+function mockConnection(callTool) {
+  return { client: { listTools: async () => ({ tools: ["rename", "cypher"].map(name => ({ name, inputSchema: { type: "object" } })) }), callTool, close: async () => {} }, transport: { close: async () => {} } };
+}
 function fixture(t) {
   const base = mkdtempSync(join(tmpdir(), "gitnexus-rename-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));
@@ -23,7 +26,7 @@ test("name/uid-only rename rejects derived outward paths before preview and appl
   symlinkSync(outside, join(root, "node_modules"), "dir");
   for (const path of ["source.ts", "node_modules/secret.ts"]) for (const dry_run of [undefined, true, false]) {
     const calls = [], router = new McpConnectionRouter({}, resolveConfig(), new AbortController().signal, () => {});
-    router.withConnection = async (_cwd, operation) => operation({ client: { callTool: async spec => { calls.push(spec.name); return reply([path]); } } });
+    router.connect = async () => mockConnection(async spec => { calls.push(spec.name); return reply([path]); });
     await assert.rejects(router.callTool(root, "rename", { symbol_uid: "Function:source.ts:X", new_name: "Y", dry_run }, new AbortController().signal), /escapes/);
     assert.deepEqual(calls, ["cypher"]);
   }
@@ -44,7 +47,7 @@ test("preflight refuses truncated malformed unsupported and over-limit responses
 test("safe preview passes through unchanged after path validation", async t => {
   const { root } = fixture(t), calls = [], expected = { content: [{ type: "text", text: "preview" }] };
   const router = new McpConnectionRouter({}, resolveConfig(), new AbortController().signal, () => {});
-  router.withConnection = async (_cwd, operation) => operation({ client: { callTool: async spec => { calls.push(spec); return spec.name === "cypher" ? reply(["src/safe.ts"]) : expected; } } });
+  router.connect = async () => mockConnection(async spec => { calls.push(spec); return spec.name === "cypher" ? reply(["src/safe.ts"]) : expected; });
   assert.equal(await router.callTool(root, "rename", { symbol_name: "X", new_name: "Y", dry_run: true }, new AbortController().signal), expected);
   assert.deepEqual(calls.map(c => c.name), ["cypher", "rename"]); assert.equal(calls[1].arguments.dry_run, true);
 });

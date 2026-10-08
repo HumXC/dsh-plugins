@@ -6,3 +6,12 @@ packages/*/lib/
 .direnv/
 result
 install.sh
+.dsh/
+.specify/
+specs/
+.mnemon
+.npm-cache
+.pnpm-store
+.proto
+/packages/dsh-magic-context/
+/packages/dsh-tray/

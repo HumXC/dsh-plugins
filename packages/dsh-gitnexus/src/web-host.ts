@@ -2,7 +2,7 @@ import type { Context } from "@deepseek-ai/cordis";
 import type { SessionId } from "@deepseek-ai/dsh-session";
 import type { SubprocessHandle } from "@deepseek-ai/dsh-subprocess";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { existsSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { once } from "node:events";
 import { randomBytes } from "node:crypto";
@@ -15,7 +15,8 @@ import type { ResolvedConfig } from "./config.js";
 import type { McpConnectionRouter } from "./mcp-router.js";
 import { GitNexusServeManager } from "./serve-manager.js";
 import { canonicalWorkspacePath, type WorkspaceRoute } from "./repository.js";
-import { prepareWorkspaceScope, scopedToolArguments } from "./workspace-isolation.js";
+import { scopedToolArguments } from "./workspace-isolation.js";
+import { prepareWorkspaceCli, prepareLockedScope } from "./local-tools.js";
 import {
   classifyApiRequest,
   forceRepoBody,
@@ -477,12 +478,12 @@ export class GitNexusWebHost {
     cwd: string,
     signal: AbortSignal,
   ): Promise<WorkspaceContext> {
-    const scope = prepareWorkspaceScope(cwd);
+    await prepareWorkspaceCli(cwd, this.config.command, signal);
+    const scope = await prepareLockedScope(cwd);
     const route = workspaceRouteForSessionCwd(scope.root);
     const serve = this.getServe(scope.root);
-    await serve.ensureStarted();
     const response = await serve.request("/api/repos", { signal });
-    if (!response.ok) throw new Error("GitNexus could not list indexed repositories");
+    if (!response.ok) { await response.body?.cancel(); throw new Error("GitNexus could not list indexed repositories"); }
     const allowed = new Set(scope.repositories.map(repo => repo.path));
     const repos = parseRepos(await response.json()).filter(repo => allowed.has(repo.repoPath ?? repo.path ?? ""));
     const repo = await selectWorkspaceRepo(repos, route.root);
@@ -713,20 +714,14 @@ export class GitNexusWebHost {
     try {
       await this.router.evict(root);
       const force = body.force ?? Boolean(workspace.repo);
-      const argv = [
-        this.config.command,
-        "analyze",
-        ...(force ? ["--force"] : []),
-        "--index-only",
-        ...(!existsSync(resolve(root, ".git")) ? ["--skip-git"] : []),
-        root,
-      ];
+      const path = await prepareWorkspaceCli(root, this.config.command);
+      const argv = [path, "analyze", ...(force ? ["--force"] : [])];
       const handle = this.ctx.subprocess.spawn({
         argv,
         cwd: root,
-        env: prepareWorkspaceScope(root).env,
+        env: (await prepareLockedScope(root)).env,
         stdio: { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
-        graceMs: 2_000,
+        graceMs: 5_000,
       });
       const jobId = `dsh-${randomBytes(18).toString("base64url")}`;
       this.analysisProcesses.set(root, { jobId, handle });
@@ -826,7 +821,7 @@ export class GitNexusWebHost {
       for (const key of ["file", "file_path", "path", "worktree"]) {
         if (upstreamUrl.searchParams.getAll(key).length > 1) throw new Error("Duplicate GitNexus path selector");
       }
-      scopedToolArguments(prepareWorkspaceScope(workspace.route.root), "context", Object.fromEntries(upstreamUrl.searchParams));
+      scopedToolArguments(await prepareLockedScope(workspace.route.root), "context", Object.fromEntries(upstreamUrl.searchParams));
     } else if (decision.kind === "repo-post" && workspace.repo) {
       let parsed: JsonObject;
       try {
@@ -840,7 +835,7 @@ export class GitNexusWebHost {
         return;
       }
       const forced = forceRepoBody(parsed, workspace.repo.name);
-      scopedToolArguments(prepareWorkspaceScope(workspace.route.root), "cypher", { ...forced, statement: forced.cypher ?? forced.statement });
+      scopedToolArguments(await prepareLockedScope(workspace.route.root), "cypher", { ...forced, statement: forced.cypher ?? forced.statement });
       body = JSON.stringify(forced);
     }
 
@@ -963,7 +958,7 @@ export class GitNexusWebHost {
     const handle = this.ctx.subprocess.spawn({
       argv: ["git", "-C", root, "rev-parse", "HEAD"],
       cwd: root,
-      env: prepareWorkspaceScope(root).env,
+      env: (await prepareLockedScope(root)).env,
       stdio: {
         stdin: "ignore",
         stdout: { maxBytes: 4_096 },

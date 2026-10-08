@@ -1,6 +1,12 @@
 packages:
   - packages/*
-allowBuilds:
-  "@deepseek-ai/dsh-subprocess-local": set this to true or false
-  koffi: set this to true or false
-  node-pty: set this to true or false
+  - "!packages/dsh-tray"
+  - "!packages/dsh-magic-context"
+storeDir: .pnpm-store
+confirmModulesPurge: false
+
+# The published Conversation declarations import this package without declaring it.
+packageExtensions:
+  "@deepseek-ai/dsh-client-ui-conversation@0.2.0-rc.2":
+    dependencies:
+      "@deepseek-ai/dsh-attachment": 0.2.0-rc.2

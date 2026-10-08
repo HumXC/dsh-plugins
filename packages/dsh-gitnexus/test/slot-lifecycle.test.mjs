@@ -40,7 +40,7 @@ async function deployedSlotCore() {
 }
 
 const slotCore = await deployedSlotCore();
-const runtimeClient = localRequire.resolve("@deepseek-ai/dsh-client-runtime/client");
+const runtimeClient = localRequire.resolve("@deepseek-ai/dsh-client-ui-renderer/client");
 const runtimeSource = await readFile(runtimeClient, "utf8");
 let runtimeFactory;
 runInNewContext(runtimeSource, { queueMicrotask, console, window: { __ModuleLoader__: { load(row) { runtimeFactory = row.factory; } } } });
@@ -48,7 +48,10 @@ assert.equal(typeof runtimeFactory, "function");
 const { SlotRegistry } = runtimeFactory(id => {
   if (id === "@deepseek-ai/cordis") return cordis;
   if (id === "@deepseek-ai/dsh-client-ui-slots") return slotCore;
-  throw new Error("unexpected runtime factory dependency: " + id);
+  if (id === "react") return React;
+  if (id === "react/jsx-runtime") return jsxRuntime;
+  if (id === "react-dom" || id === "react-dom/client") return localRequire(id);
+  throw new Error("unexpected renderer factory dependency: " + id);
 });
 assert.equal(typeof SlotRegistry, "function");
 const pluginSource = await readFile(new URL("../lib/client.js", import.meta.url), "utf8");

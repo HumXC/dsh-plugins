@@ -95,7 +95,10 @@ export class GitNexusAccess {
       if (names.includes(exec.name) && !this.allows(exec.agent, exec.name)) return "GitNexus capability not granted to this agent";
       return undefined;
     }));
-    disposers.push(ctx.on("agent/created", ({ agent }) => restrict(agent)));
+    disposers.push(ctx.on("agent/created", ({ agent }) => {
+      restrict(agent);
+      return undefined;
+    }));
     let reconciling = false;
     const reconcile = () => {
       if (reconciling) return;

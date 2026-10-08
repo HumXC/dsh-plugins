@@ -1,5 +1,5 @@
 import type { Context } from "@deepseek-ai/cordis";
-import { createUserMessage } from "@deepseek-ai/dsh-llm";
+import { boundContextSummary, createUserMessage, type ContextFormed } from "@deepseek-ai/dsh-llm";
 import type {
   PostToolDecision,
   ToolExecution,
@@ -11,6 +11,13 @@ import type { ResolvedConfig } from "./config.js";
 import { augmentationCandidates, isAugmentableTool } from "./patterns.js";
 import { resolveWorkspaceRoute, sessionCwd } from "./repository.js";
 import { prepareWorkspaceScope } from "./workspace-isolation.js";
+import { acquireWorkspaceLease } from "./workspace-lock.js";
+
+declare module "@deepseek-ai/dsh-llm" {
+  interface MessageSourceMap {
+    gitnexus: { readonly kind: "gitnexus" } & ContextFormed;
+  }
+}
 
 interface PatternCache {
   augmented: Set<string>;
@@ -129,10 +136,9 @@ export class AutoAugmentController {
     const message = createUserMessage({
       content: [{ type: "text", text: `[GitNexus graph context]\n${body}` }],
       source: {
-        kind: "plugin",
-        plugin: "dsh-gitnexus",
+        kind: "gitnexus",
         form: "notice",
-        summary: `GitNexus context for ${hits.map(({ pattern }) => pattern).join(", ")}`,
+        summary: boundContextSummary(`GitNexus context for ${hits.map(({ pattern }) => pattern).join(", ")}`),
       },
     });
 
@@ -179,7 +185,9 @@ export class AutoAugmentController {
       this.lifetime.signal,
       timeoutSignal,
     ]);
+    let lease: Awaited<ReturnType<typeof acquireWorkspaceLease>> | undefined;
     try {
+      lease = await acquireWorkspaceLease(cwd, signal);
       const handle = this.ctx.subprocess.spawn({
         argv: [this.config.command, "augment", pattern],
         cwd,
@@ -224,6 +232,8 @@ export class AutoAugmentController {
         );
       }
       return { kind: "failed" };
+    } finally {
+      lease?.release();
     }
   }
 }

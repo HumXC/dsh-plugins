@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, writeFileSync, type Dirent } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { devNull } from "node:os";
@@ -140,7 +140,16 @@ export function discoverWorkspaceRepositories(cwd: string): ScopedRepository[] {
   const stack = [root];
   while (stack.length) {
     const directory = stack.pop()!;
-    const entries = readdirSync(directory, { withFileTypes: true });
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      // Discovery cannot inspect private descendants; do not block accessible indexes.
+      // Root, Git metadata, and index storage errors still fail at their own boundaries.
+      if (directory !== root && (code === "EACCES" || code === "EPERM")) continue;
+      throw error;
+    }
     if (entries.some(entry => entry.name === ".git")) validateGitMetadata(root, directory);
     const index = entries.find(entry => entry.name === ".gitnexus");
     if (index) {

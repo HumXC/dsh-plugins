@@ -4,8 +4,9 @@ DeepSeek Harness integration for [GitNexus](https://github.com/abhigyanpatwari/G
 
 The plugin provides:
 
-- eight fixed native DSH tools backed by GitNexus's managed MCP subprocess transport;
-- per-session routing to the current workspace;
+- eight fixed native DSH graph tools, two local maintenance/CLI tools, and a lightweight status tool;
+- stable tool registration with lazy, bounded MCP capability checks in the calling session workspace;
+- scoped usage guidance that names only tools currently visible to the Agent;
 - automatic graph context after compatible DSH tool results;
 - a GitNexus view beside Chat and Trajectory in DSH Web;
 - first-time analysis and reanalysis restricted to the current workspace.
@@ -19,6 +20,22 @@ The plugin provides:
 | Headless | yes | yes | no | not started |
 
 The browser entry is declared with `platform: web`. The host-side Web companion is activated only when DSH provides both `webServer` and `sessions`; it does not alter TUI or headless interfaces.
+
+### SDK compatibility
+
+The plugin targets DSH `0.2.0-rc.2` and matching SDK declarations. Shared host APIs are peer dependencies, with matching development declarations; private runtime dependencies stay in this package. Browser builds keep React and shared UI modules external so the host module loader supplies their implementations.
+
+Client types use Cordis `Context` and the public slots, renderer, session, conversation, and tool contracts. Tool rows narrow the `preparing`, `start`, and `result` phases before reading arguments or results, and use the host disclosure hook so collapsing a Turn resets expanded rows. The retired `dsh-client-runtime` declaration and handwritten shared-component declarations are not used. `test/sdk-contracts.test.mjs` checks these contracts and the browser bundle boundary; `test/slot-lifecycle.test.mjs` exercises the SDK renderer against the deployed shell’s SlotCore, including owner disposal and reappearance.
+
+### Tool availability and usage
+
+All eight graph schemas register immediately, even if the backend command is unavailable or no index exists. Graph invocation connects and discovers capabilities in the calling workspace; an unsupported command affects only that command. Required MCP task execution is rejected before dispatch. One `toolCallTimeoutMs` deadline covers lock waits, connection, discovery, rename preflight, and execution. Cleanup has an additional allowance of `min(toolCallTimeoutMs, 1000)` milliseconds. Workspace leases release only after the managed process range is confirmed empty; unconfirmed cleanup retains the connection slot and leases for an explicit cleanup retry.
+
+The `gitnexus:usage-guidance` prompt section is assembled from the public scoped tool registry in native, PTC, and combined presentation modes. It suggests query → context → source verification for unfamiliar flows, impact before public-interface changes/deletion/cross-file refactors, and detect_changes after code changes. Exact file or symbol lookup may use read/grep directly. Index maintenance is advised only for a relevant missing or confirmed stale index. Custom `serverName` and tool restrictions apply to all referenced names.
+
+`gitnexus_status({})` reports the workspace basename, registered names, currently visible names, index-metadata presence, and cached backend capabilities/last error. It never starts a backend or declares an index fresh; an unchecked backend reports `unknown`. Backend `ready` means capability discovery succeeded, and does not prove that index queries can run. Reported MCP tool failures also populate the bounded last-error cache; a successful subsequent operation clears it. It follows the same access rules as other GitNexus tools and needs its own descriptor grant in explorer-only mode. The status tool uses the configured server prefix.
+
+Automatic graph context accepts both `read(path)` and `read(file_path)`. It recognizes real grep/glob renderings and explicit structured search results; read source bodies do not generate filename candidates.
 
 ## Coding explorer-only mode
 
@@ -35,14 +52,14 @@ Only `explore_code` should receive `gitnexus_index_status` plus its allowed read
 
 Synchronous agent-creation and tool-change reconciliation install real registry restrictions; the same guard controls execution (including nested PTC dispatch), tool bodies and autoaugmentation. Main and other roles receive no GitNexus SDK bindings. Web routes are disabled in this mode. Default `accessMode: all` preserves existing deployments.
 
-Create a **fresh background** explorer (`run_in_background: true`, or omit the field with the Coding continuable default). Foreground calls are rejected: their runtime descriptor lacks the durable capability filter. Legacy children must be replaced, not relabelled. `gitnexus_index_status` reports local metadata presence, **not freshness**. The shell-less explorer requests maintenance through main; main coordinates a Worker running `gitnexus analyze --index-only` and serializes maintenance with graph queries for the same repository. This is model-tool isolation, not an OS sandbox against roles already authorized to use arbitrary shell commands.
+Create a **fresh background** explorer (`run_in_background: true`, or omit the field with the Coding continuable default). Foreground calls are rejected: their runtime descriptor lacks the durable capability filter. Legacy children must be replaced, not relabelled. `gitnexus_index_status` reports local metadata presence, **not freshness**. A read-only explorer requests maintenance through an authorized agent using `gitnexus_analyze`; maintenance tools require their own explicit descriptor grants. This is model-tool isolation, not an OS sandbox against roles already authorized to use arbitrary shell commands.
 
-The restricted mode targets the verified DSH `0.1.2-alpha.5` descriptor/scope contract; missing descriptor APIs fail closed. `test/access.test.mjs` uses the deployed runtime selected by `DSH_RUNTIME_ROOT` (default the local npm DSH install) for real registry/SDK/PTC tests with synthetic agents and mocked MCP I/O. These are not paid model calls or a real persistence-resume lifecycle test. A source build does not update a running process's cached plugin modules: activate a new loaded generation or restart DSH when authorized, then create fresh children. No restart is performed by this plugin.
+The restricted mode targets the verified DSH `0.2.0-rc.2` descriptor/scope contract; missing descriptor APIs fail closed. `test/access.test.mjs` uses the deployed runtime selected by `DSH_RUNTIME_ROOT` (default the local npm DSH install) for real registry/SDK/PTC tests with synthetic agents and mocked MCP I/O. Its PTC fixture implements `ctx.ptcRuntime.resolve()` and `run()`; these are not paid model calls or a real persistence-resume lifecycle test. A source build does not update a running process’s cached plugin modules: activate a new loaded generation or restart DSH when authorized, then create fresh children. No restart is performed by this plugin.
 
 ## Requirements
 
 - Node.js 22 or newer
-- DSH `0.1.1-rc.2` compatible packages
+- DSH `0.2.0-rc.2` compatible packages
 - `gitnexus` available on `PATH`
 - GitNexus Web `>=1.6.5 <1.7.0`
 
@@ -61,7 +78,7 @@ dsh plugin --profile web add \
   /home/HumXC/dsh-plugins/packages/dsh-gitnexus
 ```
 
-Then restart DSH Web:
+Activate the bundle in DSH Web’s extension manager, then refresh the page. Profiles without hot reload require restarting DSH Web:
 
 ```bash
 dsh web
@@ -121,14 +138,14 @@ Web-specific settings:
 | `webUi: auto` | Enable only when DSH Web services are available. |
 | `webUi: false` | Disable the Web view and GitNexus Web service entirely. |
 | `webUi: true` | Enable the Web companion whenever DSH Web services are available. |
-| `servePort` | First loopback port for plugin-owned `gitnexus serve`; additional workspace services use subsequent ports. An occupied external server is never reused. |
+| `servePort` | Preferred first loopback port for plugin-owned `gitnexus serve`; additional workspace services prefer subsequent ports. If occupied, a free loopback port is selected. External servers are never reused. |
 | `serveStartupTimeoutMs` | Maximum wait for a plugin-owned Web service to become compatible. |
 
 The loaded plugin shows the GitNexus conversation option whenever `webUi !== false`, including without a current session or an existing index. DSH's supported `webserver/index-inject` bootstrap channel delivers only `{ webUi: boolean }` through `globalThis.__DSH_GITNEXUS_CONFIG__`; missing or malformed bootstrap data hides the view. No visibility endpoint is queried, and `/gitnexus/capability` is no longer used. Reload the page after host configuration changes; this bootstrap does not promise live configuration HMR.
 
 Opening the view initializes an opaque workspace-bound gateway with `POST /gitnexus/session/open`. A real DSH session and its workspace are required, but a `.gitnexus` directory is not. Unindexed workspaces can start analysis from the view. Native tool rows and their styles remain available even with `webUi: false`.
 
-Each workspace gets a separate owned Web process and local registry. Disposal terminates only owned processes; occupied ports fail closed without terminating external services.
+Each workspace gets a separate owned Web process and local registry. An occupied preferred port causes the plugin to start its own backend on another free loopback port, without probing, reusing, or terminating the external listener. The gateway follows the selected port, including cancellation requests. Disposal terminates only owned processes.
 
 ## Workspace-only data access
 
@@ -140,13 +157,13 @@ Repository, worktree and explicit source-file selectors are checked against cano
 
 Git subprocesses receive a discovery ceiling, cleared directory/index/shallow/config overrides, disabled global/system configuration and zero injected config entries. Local Git config includes and worktree override declarations are conservatively refused, even if their targets might be inside the workspace; repositories using these features must simplify their configuration to use this isolated integration. Inherited ripgrep configuration is cleared so rename's text-match discovery cannot enable symlink following. Git metadata trees (including index, HEAD, refs, object stores and recursive alternates) are checked through canonical targets with cycle detection; more than 100,000 metadata traversal entries and unsupported quoted pointers fail closed. This metadata validation does not walk dependency/source trees.
 
-This is application-level GitNexus data isolation, not an OS sandbox: dependency loading, trusted indexed contents and concurrent filesystem mutation are not claimed to be contained by a process sandbox. Direct user-run CLI commands require the same GITNEXUS_HOME if they should update this registry; no global shell profile is changed.
+This is application-level GitNexus data isolation, not an OS sandbox: dependency loading, trusted indexed contents and concurrent filesystem mutation are not claimed to be contained by a process sandbox. Use `gitnexus_cli` to obtain the executable workspace-bound wrapper for Bash; do not use bare/global GitNexus or override its runtime. No global shell profile is changed. The wrapper executes directly inside its caller's sandbox, never through host command IPC.
 
 The native nested rows reuse DSH's public DisclosureRow; the internal ToolRow is not exported, so input/output rendering uses a small theme-token adapter. Recovery states show workspace basenames, not absolute paths.
 
 ## Native tools and migration
 
-The plugin eagerly registers exactly eight native commands with short, handwritten descriptions and supported DSH schemas. There is no lazy tool loading or upstream schema/description pass-through. MCP discovery checks availability; a missing required command fails initialization instead of silently registering a partial set.
+The plugin eagerly registers eight native MCP-backed commands plus two local commands with short, handwritten descriptions and supported DSH schemas. Local maintenance is registered before MCP discovery and remains available when the backend is missing, corrupt or fails discovery. Discovery validates all eight upstream commands before exposing that set; a failure is logged, not represented as successful graph availability. There is no lazy tool loading or upstream schema/description pass-through.
 
 | Default name | Purpose |
 | --- | --- |
@@ -158,6 +175,8 @@ The plugin eagerly registers exactly eight native commands with short, handwritt
 | `gitnexus_rename` | Preview or apply a coordinated rename. |
 | `gitnexus_cypher` | Run structural graph queries. |
 | `gitnexus_api_impact` | Inspect API consumers and handler impact. |
+| `gitnexus_analyze` | Build/repair this workspace, always index-only; optional `force`. |
+| `gitnexus_cli` | Create/refresh and return the executable workspace-bound CLI path. |
 
 Names use `<serverName>_<rawName>`; custom server names retain normalization and length protection. Except for repository listing, omitted `repo` uses the current workspace root. The v1 schemas intentionally exclude branch selection, repository groups and PDG-specific options. Query accepts `query` and optional `content`, mapped internally to GitNexus's `search_query` and `include_content`.
 
@@ -168,6 +187,20 @@ The Web client registers keyed tool rows for the default `gitnexus_*` names, inc
 Rename defaults to `dry_run: true`. Review the preview and obtain authorization before setting `dry_run: false`, which writes files; analyze the resulting changes afterward. Schema defaults are annotations, not automatic runtime validation.
 
 **Migration:** replace old `mcp__gitnexus__*` names in tool filters, grants and scripts with the corresponding `gitnexus_*` native names. Old MCP names are not aliases. Keep `gitnexus_index_status` as the separate explicit-grant capability marker in restricted mode, grant only the required native commands, and create fresh background children so their durable descriptors contain the new names.
+
+## Controlled workspace CLI and coordination
+
+`gitnexus_cli({})` returns `{ text }` containing JSON with the actual executable `path`, supported usage and policy. The analyze tool and Web workspace initialization also refresh this wrapper idempotently at `<workspace>/.gitnexus/bin/gitnexus`. Invoke that exact executable from Bash; paths containing spaces must be quoted. It imports the installed compiled helper and binds the canonical workspace and configured executable. No package-manager fallback, shell evaluation, global profile change, host execution IPC or self-escalation is used.
+
+The audited CLI surface is intentionally narrow: `analyze [--force] [--index-only]`, local-only `status`, `query <query> [--limit N]`, `context <symbol> [--content]`, `impact <symbol> [--direction upstream|downstream] [--depth N] [--limit N] [--offset N] [--include-tests] [--summary-only]`, and `detect-changes [--scope unstaged|staged|all|compare] [--base-ref REF] [--limit N]`. Analysis always supplies `--index-only`, a bound root and derived Git-less handling. Unknown commands/flags, duplicate flags, root/repo/environment overrides, configuration/output paths, installation, clean/setup, watch and raw CLI rename are denied. Native rename retains its graph-path preflight.
+
+Native analyze returns JSON in `text` with wrapper path, exit code, stdout, stderr, cancellation and truncation status. Nonzero exits, cancellation and collection loss are errors, never success. Each native stream has an 8 MiB collection cap; loss is explicit. The standalone CLI streams stdout/stderr without truncation and preserves exit/signal status. Cancellation forwards the signal and escalates an unresponsive child after 2 seconds, holding the lease until child exit.
+
+All graph operations use an exclusive filesystem lease (`.gitnexus/coordination.lock`), with bounded 30-second waiting and abort support. Parent-scoped MCP operations on an indexed descendant additionally hold that physical repository lease in ancestor-first order. Independent workspaces do not share leases. MCP clients close after each call. Web keeps its server cached: active response bodies hold the operation lease, then maintenance publishes a passive drain marker; a 25 ms host poll can only close the specifically registered owned server, never execute a request. Writers wait up to 15 seconds for confirmed backend shutdown before touching the index. Later Web access restarts lazily.
+
+An unknown, malformed, stale or unsafe lock/registration is not automatically stolen, including after SIGKILL or a host crash. Normal exit/cancel cleans up owned files. For manual recovery, first stop and verify **all** graph processes for that workspace have exited (a dead parent may leave a child); only then may an authorized operator remove that workspace's stale coordination lock and backend registration/drain files. Do not remove index data or bypass a live owner. Unconfirmed process shutdown retains ownership and blocks writers.
+
+After upgrading, restart DSH when authorized so every active plugin instance uses this coordination protocol. Older running MCP/Web processes do not automatically adopt filesystem leases or backend registration; mixing old instances with the new wrapper is not a coordinated deployment. Rebuilding files alone does not reload host modules, and the plugin never stops unowned or legacy processes on your behalf.
 
 ## Validation
 

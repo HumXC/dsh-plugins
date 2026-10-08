@@ -17,9 +17,8 @@ test("effective worktree and include overrides fail before detect_changes dispat
   const root = fixture(t);
   for (const contents of ['[core]\nworktree = /outside', '[includeif.gitdir:/outside]\npath=/outside/config', '[CoRe] worktree=/outside', '[include]\npath=/outside/config', '[includeIf "gitdir:*"]\npath=/outside/config']) {
     writeFileSync(join(root, ".git", "config"), contents);
-    const router = new McpConnectionRouter({}, resolveConfig(), new AbortController().signal, () => {});
     let dispatched = false;
-    router.withConnection = async () => { dispatched = true; };
+    const router = new McpConnectionRouter({ spawn() { dispatched = true; throw new Error("Unexpected backend spawn"); } }, resolveConfig(), new AbortController().signal, () => {});
     await assert.rejects(router.callTool(root, "detect_changes", {}, new AbortController().signal), /configuration includes or worktree overrides/);
     assert.equal(dispatched, false);
   }

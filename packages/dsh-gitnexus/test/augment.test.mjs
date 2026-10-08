@@ -81,6 +81,9 @@ test("adds GitNexus context once per session and pattern", async () => {
     }));
     assert.equal(first.kind, "accept");
     assert.equal(first.additionalContexts.length, 1);
+    assert.equal(first.additionalContexts[0].source.kind, "gitnexus");
+    assert.equal(first.additionalContexts[0].source.form, "notice");
+    assert.equal(first.additionalContexts[0].source.summary, "GitNexus context for AuthService");
     assert.match(
       first.additionalContexts[0].content[0].text,
       /AuthService -> UserRepository/,

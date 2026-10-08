@@ -128,7 +128,7 @@ async function createFixture(t, fetchImplementation) {
               },
             };
           }
-          assert.equal(options.argv?.[0], "gitnexus");
+          assert.equal(options.argv?.[0], options.argv[1] === "serve" ? "gitnexus" : join(options.cwd, ".gitnexus/bin/gitnexus"));
           assert.equal(options.env.GITNEXUS_HOME, join(options.cwd, ".gitnexus", "runtime"));
           if (options.argv[1] === "serve") {
             const port = options.argv[options.argv.indexOf("--port") + 1];
@@ -280,11 +280,7 @@ test("GitNexus Web host", async (t) => {
       });
       assert.equal(forced.status, 202);
       assert.deepEqual(fixture.analysisCommands.at(-1), [
-        "gitnexus",
-        "analyze",
-        "--force",
-        "--index-only",
-        fixture.current,
+        join(fixture.current, ".gitnexus/bin/gitnexus"), "analyze", "--force",
       ]);
       fixture.analysis.finish(fixture.current, "completed");
       const afterRebuild = await call(fixture.port, gateway + "/dsh/status");
@@ -383,7 +379,7 @@ test("GitNexus Web host", async (t) => {
       assert.equal(analyzing.body.state, "analyzing");
       assert.equal(queryCalls, 0);
       assert.deepEqual(fixture.analysisCommands, [
-        ["gitnexus", "analyze", "--index-only", "--skip-git", fixture.current],
+        [join(fixture.current, ".gitnexus/bin/gitnexus"), "analyze"],
       ]);
 
       const cancelled = await call(
@@ -426,12 +422,7 @@ test("GitNexus Web host", async (t) => {
       });
       assert.equal(analysis.status, 202);
       assert.deepEqual(fixture.analysisCommands.at(-1), [
-        "gitnexus",
-        "analyze",
-        "--force",
-        "--index-only",
-        "--skip-git",
-        fixture.child,
+        join(fixture.child, ".gitnexus/bin/gitnexus"), "analyze", "--force",
       ]);
       assert.equal(fixture.analysisCwds.at(-1), fixture.child);
       assert.equal(fixture.analysis.state(fixture.ancestor), undefined);

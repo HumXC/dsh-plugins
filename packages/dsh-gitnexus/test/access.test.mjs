@@ -81,7 +81,7 @@ test('actual registry: main and six roles hidden, explorer visible, PTC bindings
     assert.equal(f.calls.length, 1);
     assert.equal((await run(f.ctx.tools, main, 'explore_code', { run_in_background: false })).isError, true);
     let seen;
-    f.ctx.provide('codeRuntime', { language: 'typescript', async run({ bindings }) {
+    f.ctx.provide("ptcRuntime", { language: "typescript", isolation: "test", resolve(request) { return request; }, async run({ bindings }) {
       const functions = bindings[0].functions;
       seen = Object.keys(functions);
       if (functions[query]) await functions[query]({ query: 'graph' });

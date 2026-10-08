@@ -1,4 +1,6 @@
-import type { ClientContext } from "@deepseek-ai/dsh-client-runtime/client";
+import type { Context } from "@deepseek-ai/cordis";
+export type {} from "@deepseek-ai/dsh-client-ui-renderer/client";
+export type {} from "@deepseek-ai/dsh-client-ui-session/client";
 import type { ConvViewProps } from "@deepseek-ai/dsh-client-ui-conversation/client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { registerGitNexusToolRows, GITNEXUS_TOOL_CSS } from "./tool-rows.js";
@@ -634,7 +636,7 @@ const GITNEXUS_CSS = `
 
 export const inject = ["slots"];
 
-type GitNexusClientContext = Pick<ClientContext, "effect" | "slots">;
+type GitNexusClientContext = Pick<Context, "effect" | "slots">;
 
 export function apply(ctx: GitNexusClientContext): void {
   registerGitNexusToolRows(ctx);

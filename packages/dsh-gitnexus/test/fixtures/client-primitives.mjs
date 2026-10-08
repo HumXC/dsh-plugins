@@ -1,5 +1,43 @@
 import React from "react";
 import * as jsxRuntime from "react/jsx-runtime";
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { runInNewContext } from "node:vm";
+
+// Bind the actual installed host Hook to a controllable enclosing-Turn reset source.
+const runtimeRoot = process.env.DSH_RUNTIME_ROOT ?? join(homedir(), ".npm-packages/lib/node_modules/@deepseek-ai/dsh");
+const deployedRequire = createRequire(join(runtimeRoot, "package.json"));
+const chatSource = await readFile(deployedRequire.resolve("@deepseek-ai/dsh-client-ui-chat/client"), "utf8");
+const hookStart = chatSource.indexOf("//#region lib/types/client/chat/use-disclosure.js");
+const hookEnd = chatSource.indexOf("//#endregion", hookStart);
+assert.ok(hookStart >= 0 && hookEnd > hookStart, "installed host must expose its disclosure Hook source section");
+const { bindDisclosure } = runInNewContext(chatSource.slice(hookStart, hookEnd) + "; ({ bindDisclosure })", { react: React });
+
+export function createDisclosureHarness() {
+  let version = 0;
+  const listeners = new Set();
+  const useDisclosure = bindDisclosure({
+    getSnapshot: () => version,
+    subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+  });
+  return {
+    useDisclosure,
+    collapseTurn() { version++; for (const listener of listeners) listener(); },
+    subscriberCount: () => listeners.size,
+  };
+}
+
+export function toolCallProps(block, extra = {}) {
+  return {
+    sessionId: "row-session", callId: block.callId, toolName: "gitnexus_impact",
+    phase: block.kind === "tool-result" ? "result" : block.phase, block,
+    openFile() {}, loadImage: async () => null,
+    useDisclosure: createDisclosureHarness().useDisclosure, ...extra,
+  };
+}
 
 // Contract stub for the host-owned primitive, not a replacement shipped to Web.
 export function DisclosureRow({ icon, title, open, onToggle, collapsedContent, children, rowClassName, titleClassName, expandOnRowClick, keepContentWhenOpen }) {

@@ -1,11 +1,8 @@
-import process from "node:process";
 import type { Context } from "@deepseek-ai/cordis";
 import type { WebServer } from "@deepseek-ai/dsh-host-webserver";
 import type { ContentBlock } from "@deepseek-ai/dsh-llm";
-import type {
-  JsonValue,
-  ToolDefinition,
-} from "@deepseek-ai/dsh-tools";
+import type { ToolDefinition } from "@deepseek-ai/dsh-tools";
+import type { JsonValue } from "@deepseek-ai/dsh-util-values";
 import { AnalysisCoordinator } from "./analysis-coordinator.js";
 import { GitNexusAccess, INDEX_STATUS_TOOL } from "./access.js";
 import { AutoAugmentController } from "./augment.js";
@@ -18,6 +15,9 @@ import { resolveWorkspaceRoute, sessionCwd } from "./repository.js";
 import { GitNexusWebHost } from "./web-host.js";
 import { NATIVE_COMMANDS } from "./commands.js";
 import { commandArguments } from "./arguments.js";
+import { localToolDefinitions } from "./local-tools.js";
+import { diagnosticToolDefinition } from "./diagnostics.js";
+import { installUsageGuidance } from "./guidance.js";
 
 export { Config };
 export type { PluginConfig as ConfigOptions, ResolvedConfig };
@@ -30,7 +30,7 @@ export {
 } from "./patterns.js";
 
 export const name = "dsh-gitnexus";
-export const inject = ["tools", "subprocess"];
+export const inject = ["tools", "subprocess", "systemPrompt"];
 
 interface RoutedMcpValue {
   text: string;
@@ -125,7 +125,7 @@ function toolArguments(value: unknown): Record<string, unknown> {
 }
 
 export function routedToolDefinition(
-  tool: ListedMcpTool,
+  tool: Pick<ListedMcpTool, "name">,
   router: McpConnectionRouter,
   config: ResolvedConfig,
   access = new GitNexusAccess(config),
@@ -168,9 +168,6 @@ export function routedToolDefinition(
     },
     async execute(args, exec) {
       access.assert(exec.agent, publicName);
-      if (tool.execution?.taskSupport === "required") {
-        throw new Error("GitNexus tool requires unsupported MCP task execution: " + tool.name);
-      }
       const cwd = sessionCwd(exec.agent);
       if (!cwd) throw new Error("GitNexus requires a session workspace");
       const route = resolveWorkspaceRoute(cwd);
@@ -191,7 +188,7 @@ export async function apply(
 ): Promise<void> {
   const config = resolveConfig(rawConfig);
   // Only display permission crosses DSH's structured HTML bootstrap channel.
-  // Register before async discovery, including when the Web view is disabled.
+  // Register before tool setup, including when the Web view is disabled.
   ctx.on("webserver/index-inject", (rows) => {
     rows.push({ kind: "global", name: "__DSH_GITNEXUS_CONFIG__", value: { webUi: config.webUi !== false } });
   });
@@ -209,12 +206,14 @@ export async function apply(
   let augmenter: AutoAugmentController | undefined;
 
   try {
-    const discoveryRoute = resolveWorkspaceRoute(process.cwd());
-    const tools = await router.discoverTools(discoveryRoute.root);
     const names = new Set<string>();
+    for (const tool of localToolDefinitions(ctx, config, access)) {
+      names.add(tool.name);
+      disposers.push(ctx.tools.register(tool));
+    }
+    // Schemas are local and stable; readiness is checked in the caller workspace.
     for (const command of NATIVE_COMMANDS) {
-      const tool = tools.find(tool => tool.name === command.name);
-      if (tool === undefined) throw new Error("GitNexus backend is missing required tool: " + command.name);
+      const tool = { name: command.name };
       const publicName = publicToolName(config.serverName, command.name);
       if (names.has(publicName)) {
         throw new Error(
@@ -226,6 +225,11 @@ export async function apply(
         ctx.tools.register(routedToolDefinition(tool, router, config, access)),
       );
     }
+
+    const statusName = publicToolName(config.serverName, "status");
+    if (names.has(statusName)) throw new Error("GitNexus status name collision");
+    names.add(statusName);
+    disposers.push(ctx.tools.register(diagnosticToolDefinition(ctx, config, access, router, names)));
 
     if (config.accessMode !== "all") {
       if (names.has(INDEX_STATUS_TOOL)) throw new Error("GitNexus index status name collision");
@@ -249,6 +253,8 @@ export async function apply(
       }));
       disposers.push(access.install(ctx, [...names]));
     }
+
+    disposers.push(installUsageGuidance(ctx, config));
 
     if (config.autoAugment) {
       augmenter = new AutoAugmentController(ctx, config, analysis, access);

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync, existsSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -60,9 +60,8 @@ test("repo, worktree, and filesystem selectors reject external paths before disp
   }
   assert.equal(scopedToolArguments(scope, "query", { repo: "child" }).repo, join(root, "child"));
   assert.throws(() => scopedToolArguments(scope, "query", { repo: "@group" }), /Invalid/);
-  const router = new McpConnectionRouter({}, resolveConfig(), new AbortController().signal, () => {});
   let dispatched = false;
-  router.withConnection = async () => { dispatched = true; };
+  const router = new McpConnectionRouter({ spawn() { dispatched = true; throw new Error("Unexpected backend spawn"); } }, resolveConfig(), new AbortController().signal, () => {});
   await assert.rejects(router.callTool(root, "context", { repo: outside }, new AbortController().signal), /outside/);
   assert.equal(dispatched, false);
 });
@@ -102,4 +101,43 @@ test("filesystem-capable Cypher procedures fail closed", t => {
   const scope = prepareWorkspaceScope(root);
   assert.throws(() => scopedToolArguments(scope, "cypher", { statement: "CALL read_csv('/outside')" }), /filesystem/);
   assert.equal(scopedToolArguments(scope, "cypher", { statement: "MATCH (n) RETURN n LIMIT 1" }).repo, root);
+});
+
+test("private descendants do not block accessible root and nested indexes", { skip: process.getuid?.() === 0 }, t => {
+  const { root } = fixture(t);
+  const privateDirectory = join(root, "runtime-data");
+  index(root);
+  index(join(root, "child"));
+  index(privateDirectory);
+  chmodSync(privateDirectory, 0o000);
+  try {
+    const scope = prepareWorkspaceScope(root);
+    assert.deepEqual(scope.repositories.map(repo => repo.path).sort(), [root, join(root, "child")].sort());
+    assert.deepEqual(JSON.parse(readFileSync(join(scope.home, "registry.json"), "utf8")).map(repo => repo.path), scope.repositories.map(repo => repo.path));
+  } finally { chmodSync(privateDirectory, 0o700); }
+});
+
+test("unreadable workspace root still fails discovery", { skip: process.getuid?.() === 0 }, t => {
+  const { root } = fixture(t);
+  index(root);
+  chmodSync(root, 0o000);
+  try {
+    assert.throws(() => discoverWorkspaceRepositories(root), { code: "EACCES" });
+  } finally { chmodSync(root, 0o700); }
+});
+
+test("unreadable index storage and Git metadata still fail discovery", { skip: process.getuid?.() === 0 }, t => {
+  const { root } = fixture(t);
+  index(root);
+  const storage = join(root, ".gitnexus");
+  chmodSync(storage, 0o000);
+  try {
+    assert.throws(() => discoverWorkspaceRepositories(root), { code: "EACCES" });
+  } finally { chmodSync(storage, 0o700); }
+  const git = join(root, ".git");
+  mkdirSync(git);
+  chmodSync(git, 0o000);
+  try {
+    assert.throws(() => discoverWorkspaceRepositories(root), { code: "EACCES" });
+  } finally { chmodSync(git, 0o700); }
 });
